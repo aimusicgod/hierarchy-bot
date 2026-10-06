@@ -674,18 +674,28 @@ async def act_submit(interaction, username, link):
                            "You'll get a DM when it's approved or denied, and again when Hierarchy Music confirms them as Effective.")
 
 
+def scout_status_label(x):
+    """What a scout sees for one submission. Approval comes first; after that Hierarchy Music's confirmed status."""
+    if x["decision"] == "denied":
+        return "Not moving forward"
+    if x["decision"] != "approved":
+        return "In review"
+    if x["status"] == "pending":
+        return "Approved, awaiting confirmation"
+    return core.STATUS_LABELS[x["status"]]
+
+
 async def act_mystatus(interaction):
     subs = core.submissions_for(db(), interaction.user.id)
     if not subs:
         return await say(interaction, "No submissions yet. Tap **Submit a prospect**.")
     counts = {}
     for x in subs:
-        k = x["status"] if x["decision"] == "approved" else x["decision"]
+        k = scout_status_label(x)
         counts[k] = counts.get(k, 0) + 1
     e = discord.Embed(title="Your submissions", color=GOLD,
-                      description="\n".join(f"@{x['ig_username']}: " + (core.DECISIONS[x['decision']] if x['decision'] != 'approved'
-                                                                     else core.STATUS_LABELS[x['status']]) for x in subs[:25]))
-    e.set_footer(text=f"Total {len(subs)}  |  " + "  ".join(f"{core.STATUS_LABELS.get(k) or core.DECISIONS[k]}: {v}" for k, v in counts.items()))
+                      description="\n".join(f"@{x['ig_username']}: {scout_status_label(x)}" for x in subs[:25]))
+    e.set_footer(text=f"Total {len(subs)}  |  " + "  ".join(f"{k}: {v}" for k, v in counts.items()))
     await say(interaction, embed=e)
 
 

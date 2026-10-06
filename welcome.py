@@ -39,7 +39,9 @@ GUIDE = [
              "2. If approved, we take it from there and reach out to the artist.\n"
              "3. Once Hierarchy Music confirms the artist as **Effective**, your 5% starts."),
             ("Statuses",
-             "**Pending**: submitted, not yet confirmed by Hierarchy Music.\n"
+             "**In review**: we haven't decided yet.\n"
+             "**Not moving forward**: we passed on this one.\n"
+             "**Approved, awaiting confirmation**: we approved it and are working on it. Hierarchy Music hasn't confirmed them yet.\n"
              "**Effective**: confirmed by Hierarchy Music as signed and active. You earn your 5% in months they generate revenue.\n"
              "**Terminated**: Hierarchy Music has confirmed they are no longer with us. No new 5% is earned after this. Earnings already credited stay."),
         ],
@@ -137,8 +139,9 @@ FAQ = [
     ("Do I contact the artist?", "No. Submit them with the button and Hierarchy Music reaches out."),
     ("How do I know if my submission was accepted?",
      "You get a DM when it's approved or denied. **My submissions** shows where each one stands."),
-    ("What do Pending, Effective and Terminated mean?",
-     "Pending: submitted, not yet confirmed by Hierarchy Music. Effective: confirmed as signed and active, and you earn your 5% "
+    ("What do the statuses on My submissions mean?",
+     "In review: we haven't decided yet. Not moving forward: we passed. Approved, awaiting confirmation: we approved it and "
+     "Hierarchy Music hasn't confirmed them yet. Effective: confirmed as signed and active, and you earn your 5% "
      "in months they generate revenue. Terminated: no longer with us, so no new 5%. Earnings already credited stay."),
     ("Someone already submitted that artist. Now what?",
      "The first scout to submit gets credit. The bot tells you when an artist is already taken."),
