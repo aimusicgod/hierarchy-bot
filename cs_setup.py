@@ -86,7 +86,7 @@ async def _ensure_channel(guild, category, name, kind, ow, slowmode, notes):
     topic = T.TOPICS.get(name)
     if ch is not None:
         kw = {"overwrites": ow, "category": category}
-        if kind in ("text", "forum", "stage") and topic:
+        if kind in ("text", "forum") and topic:
             kw["topic"] = topic
         if kind == "text":
             kw["slowmode_delay"] = slowmode
@@ -99,8 +99,8 @@ async def _ensure_channel(guild, category, name, kind, ow, slowmode, notes):
         ch = await guild.create_voice_channel(name, category=category, overwrites=ow)
     elif kind == "stage":
         try:
-            ch = await guild.create_stage_channel(name, category=category, overwrites=ow, topic=topic or name)
-        except discord.HTTPException:
+            ch = await guild.create_stage_channel(name, category=category, overwrites=ow)
+        except (discord.HTTPException, TypeError):
             notes.append("Stage channels need Community turned on, so #office-hours is a voice channel for now.")
             ch = await guild.create_voice_channel(name, category=category, overwrites=ow)
     else:  # forum
@@ -172,8 +172,13 @@ async def build_server(guild, post_apply, post_studio):
         if cat is None:
             cat = await guild.create_category(cat_name)
         for name, kind, who, ro, slow in chans:
-            ow = overwrites(guild, kind, who, ro)
-            await _ensure_channel(guild, cat, name, kind, ow, slow, notes)
+            try:
+                ow = overwrites(guild, kind, who, ro)
+                await _ensure_channel(guild, cat, name, kind, ow, slow, notes)
+            except discord.Forbidden:
+                raise
+            except (discord.HTTPException, TypeError, ValueError) as e:
+                notes.append(f"I couldn't set up #{name} ({e}). You can create it by hand and run /setup-server again.")
         await cat.edit(overwrites=category_overwrites(guild, CATEGORY_WHO.get(cat_name, ["member"])))
     await _post(guild, "welcome", "welcome", discord.Embed(title=T.WELCOME_TITLE, description=T.WELCOME_TEXT, color=ctx.gold))
     await _post(guild, "rules", "rules", discord.Embed(title=T.RULES_TITLE, description=T.RULES_TEXT, color=ctx.gold))
