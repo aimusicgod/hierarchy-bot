@@ -1,5 +1,5 @@
 {
-  "_instructions": "Fill this in with the rates and contact details each studio gave you. Nothing here is a real rate until you enter it. Each room looks like {\"name\": \"Studio A\", \"rate\": \"$__ / hour\", \"minimum\": \"__ hours\", \"includes\": [\"engineer\", \"...\"]}. booking_email is where the bot sends requests. booking_contact and referral_wording are what the artist sees once a person taps Available. Update rates_as_of whenever the studio changes its rates, then run /setup-studio again.",
+  "_instructions": "Fill this in with the rates and contact details each studio gave you. Nothing here is a real rate until you enter it. Each room looks like {\"name\": \"Studio A\", \"rate\": \"$__ / hour\", \"minimum\": \"__ hours\", \"includes\": [\"engineer\", \"...\"]}. booking_email is where the bot sends requests. booking_contact and referral_wording are what the artist sees once a person taps Available. Update rates_as_of whenever the studio changes its rates, then run /setup-studio again. city is shown next to the studio name. Set \"featured\": true on the studio you want shown first with a star, and write a short \"tagline\" in your own words (only things that are true and that you can stand behind, since artists will read it as your endorsement). Leave tagline empty to show none.",
   "studios": [
     {
       "id": "paramount",
@@ -8,7 +8,10 @@
       "booking_contact": "",
       "referral_wording": "",
       "rates_as_of": "",
-      "rooms": []
+      "rooms": [],
+      "city": "Los Angeles, CA",
+      "featured": true,
+      "tagline": ""
     },
     {
       "id": "weddington",
@@ -17,7 +20,10 @@
       "booking_contact": "",
       "referral_wording": "",
       "rates_as_of": "",
-      "rooms": []
+      "rooms": [],
+      "city": "Los Angeles, CA",
+      "featured": false,
+      "tagline": ""
     }
   ]
 }

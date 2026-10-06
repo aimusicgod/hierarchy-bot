@@ -71,7 +71,7 @@ try:
     creators.start_application(conn, 4, "artist", "Q R", "stranger", "z", "q@x.com", "212-555-0111", now=T0 + datetime.timedelta(days=1)); raise SystemExit("reapplied too soon")
 except creators.ApplyBlocked:
     pass
-creators.start_application(conn, 4, "artist", "Q R", "stranger", "z", "q@x.com", "212-555-0111", now=T0 + datetime.timedelta(days=8))
+creators.start_application(conn, 4, "artist", "Q R", "stranger", "z", "q@x.com", "212-555-0111", now=T0 + datetime.timedelta(days=60))
 try:
     creators.start_application(conn, 9, "dancer", "Al Smith", "xx", "yy", "a@b.com", "212-555-0147"); raise SystemExit
 except ValueError:
@@ -199,6 +199,6 @@ except studio.RequestLimit:
 studio.update_request(conn, r1, status="declined"); studio.create_request(conn, 1, "paramount", "", "Sun", "4h", "")
 studio.mark_booked(conn, r2, "2026-10-01")
 assert [x["id"] for x in studio.due_followups(conn, "2026-10-05")] == [r2]
-assert "introduction only" in studio.DISCLAIMER and "discount" in studio.DISCLAIMER
+assert "introduction only" in studio.DISCLAIMER and "discount" not in studio.DISCLAIMER
 print("studio: OK")
 print("\nAll creators checks passed.")

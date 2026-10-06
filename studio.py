@@ -10,7 +10,8 @@ OPEN_STATUSES = ("new", "emailed", "offered", "booked")
 MAX_OPEN = 2
 
 DISCLAIMER = ("Hierarchy Music is making an introduction only. Booking, payment and terms are between you and the studio. "
-              "Rates may change. Hierarchy Music receives a discount on bookings referred through it.")
+              "You are responsible for paying the studio, and Hierarchy Music is not responsible for any unpaid bills or "
+              "balances. Rates may change.")
 
 
 class RequestLimit(Exception):
@@ -31,14 +32,24 @@ def load_studios(path=STUDIO_PATH):
     return {s["id"]: s for s in data["studios"]}
 
 
+def title(s):
+    """Studio name with its city, e.g. 'Paramount Recording Studios (Los Angeles, CA)'."""
+    return f"{s['name']} ({s['city']})" if s.get("city") else s["name"]
+
+
+def ordered(studios):
+    """Featured studios first, then the rest in file order."""
+    return sorted(studios.values(), key=lambda s: not s.get("featured"))
+
+
 def room_options(studios):
     """[(value, label)] for the room picker. A studio with no rooms listed gets one option."""
     out = []
-    for s in studios.values():
+    for s in ordered(studios):
         if s["rooms"]:
-            out += [(f"{s['id']}|{r['name']}", f"{s['name']}: {r['name']}") for r in s["rooms"]]
+            out += [(f"{s['id']}|{r['name']}", f"{s['name']} ({s['city']}): {r['name']}" if s.get("city") else f"{s['name']}: {r['name']}") for r in s["rooms"]]
         else:
-            out.append((f"{s['id']}|", s["name"]))
+            out.append((f"{s['id']}|", title(s)))
     return out
 
 

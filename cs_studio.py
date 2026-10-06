@@ -19,8 +19,11 @@ STAFF_ONLY = ("avail", "alt", "na")
 def panel_embed():
     studios = studio.load_studios()
     e = discord.Embed(title=T.STUDIO_TITLE, description=T.STUDIO_INTRO, color=ctx.gold)
-    for s in studios.values():
-        e.add_field(name=s["name"], value=studio.rate_lines(s)[:1000], inline=False)
+    for s in studio.ordered(studios):
+        star = "⭐ " if s.get("featured") else ""
+        tag = (s.get("tagline") or "").strip()
+        body = (f"*{tag}*\n\n" if tag else "") + studio.rate_lines(s)
+        e.add_field(name=f"{star}{studio.title(s)}"[:256], value=body[:1000], inline=False)
     e.add_field(name="Good to know", value=studio.DISCLAIMER, inline=False)
     return e
 

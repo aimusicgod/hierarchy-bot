@@ -54,7 +54,9 @@ ACADEMY_TEXT = (
 
 STUDIO_TITLE = "Book a studio session"
 STUDIO_INTRO = ("Pick a room below, then tell us your preferred dates, session length and any engineer or gear needs. "
-                "We'll reach out to the studio, and you'll hear back here.")
+                "We'll reach out to the studio, and you'll hear back here.\n\n"
+                "Both studios are in the Los Angeles area. Travel and lodging are up to you; if you can't make it to LA, "
+                "you can skip this one.")
 
 WEEKLY_GOALS_TOPIC = "Post your goal for the week here. Your private check-in channel is separate."
 
