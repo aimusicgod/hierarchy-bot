@@ -14,6 +14,8 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 import core
+import creators
+import creator_server
 import scheduler
 import welcome
 import agreement
@@ -33,7 +35,6 @@ WELCOME_CHANNEL_ID = os.getenv("WELCOME_CHANNEL_ID")        # public welcome cha
 SCOUT_CHANNEL_ID = os.getenv("SCOUT_CHANNEL_ID")            # scout commands channel (auto-posted)
 SCOUT_ROLE_ID = os.getenv("SCOUT_ROLE_ID")                # role that unlocks the scout channels after approval
 CREATOR_GUILD_ID = os.getenv("CREATOR_GUILD_ID")          # the separate creator server
-CREATOR_ROLE_ID = os.getenv("CREATOR_ROLE_ID")            # optional role to give creators after onboarding
 CALENDLY_KEY = os.getenv("CALENDLY_SIGNING_KEY", "")
 CALCOM_SECRET = os.getenv("CALCOM_SECRET", "")
 G_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -48,7 +49,9 @@ NO_PINGS = discord.AllowedMentions.none()
 
 
 def db():
-    return core.connect(DB_PATH)
+    conn = core.connect(DB_PATH)
+    creators.ensure_schema(conn)
+    return conn
 
 
 async def say(interaction: discord.Interaction, content=None, **kw):
@@ -320,8 +323,17 @@ async def sync_scout_channel():
 # ---------- bot + web hook ----------
 class Bot(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        if os.getenv("MEMBERS_INTENT") == "1":   # also switch on 'Server Members Intent' in the Discord developer portal
+            intents.members = True
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
+
+    async def on_member_join(self, member):
+        try:
+            await creator_server.on_member_join(member)
+        except Exception as e:
+            print(f"[creators] on_member_join failed: {e}")
 
     async def on_ready(self):
         if not getattr(self, "_posts_done", False):
@@ -333,7 +345,10 @@ class Bot(discord.Client):
         self.add_view(ApplyPanel())
         self.add_view(ScoutPanel())
         self.add_view(AdminPanel())
-        self.add_view(CreatorPanel())
+        creator_server.init(bot=self, db=db, say=say, review_channel=review_channel, file_modal=FileModal,
+                            org_tz=ORG_TZ, guild_id=CREATOR_GUILD_ID, staff_guild_id=GUILD_ID,
+                            nudge_channel_id=os.getenv("NUDGE_CHANNEL_ID"), gold=GOLD, no_pings=NO_PINGS, max_upload=MAX_UPLOAD)
+        creator_server.register(self)
         if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
             self.tree.copy_global_to(guild=guild)
@@ -342,12 +357,15 @@ class Bot(discord.Client):
             await self.tree.sync()
         if CREATOR_GUILD_ID:
             await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
-        if HMAC_KEYS or CALENDLY_KEY or CALCOM_SECRET or INTAKE_SECRET:  # webhooks arrive here from DocuSign / your scheduler
+        creator_server.start_loops(self)
+        if HMAC_KEYS or CALENDLY_KEY or CALCOM_SECRET or INTAKE_SECRET or creator_server.needs_web_server():  # webhooks arrive here from DocuSign / your scheduler
             app = web.Application()
             app.router.add_post("/docusign", docusign_hook)
             app.router.add_post("/calendly", calendly_hook)
             app.router.add_post("/calcom", calcom_hook)
             app.router.add_post("/intake", intake_hook)
+            for _m, _path, _fn in creator_server.web_routes():
+                app.router.add_post(_path, _fn)
             app.router.add_get("/health", lambda r: web.Response(text="ok"))
             runner = web.AppRunner(app)
             await runner.setup()
@@ -774,19 +792,6 @@ async def act_import_earnings(interaction, att: discord.Attachment):
     await say(interaction, embed=e)
 
 
-async def set_creator_access(discord_id, allowed: bool):
-    """Give or remove the creator role in the creator server. Needs CREATOR_GUILD_ID + CREATOR_ROLE_ID."""
-    if not (CREATOR_GUILD_ID and CREATOR_ROLE_ID and discord_id):
-        return
-    try:
-        guild = bot.get_guild(int(CREATOR_GUILD_ID)) or await bot.fetch_guild(int(CREATOR_GUILD_ID))
-        member = await guild.fetch_member(int(discord_id))
-        role = discord.Object(id=int(CREATOR_ROLE_ID))
-        await (member.add_roles(role) if allowed else member.remove_roles(role))
-    except (discord.HTTPException, ValueError):
-        pass
-
-
 async def act_import_creators(interaction, att: discord.Attachment):
     if att.size > MAX_UPLOAD:
         return await say(interaction, "File is too large.")
@@ -801,9 +806,11 @@ async def act_import_creators(interaction, att: discord.Attachment):
         sub = core.get_submission(conn, sub_id)
         await refresh_review_card(sub)
         await dm_scout(scout_id, f"Update on your submission @{ig}: it is now: {core.STATUS_LABELS[new]}.")
-        cr = core.creators_by_ig(conn, ig)
-        if cr and cr["discord_id"] and new in ("effective", "terminated"):
-            await set_creator_access(cr["discord_id"], new == "effective")
+    for handle, old_ts, new_ts in rep.get("managed_changed", []):
+        try:
+            await creator_server.on_status_change(handle, old_ts, new_ts)
+        except Exception as ex:
+            print(f"[creators] status change failed for {handle}: {ex}")
     e = discord.Embed(title="Creators import", color=GOLD,
                       description="\n".join(lines)[:3500] or "No status changes.")
     e.add_field(name="Updated", value=str(len(rep["changed"])))
@@ -1003,65 +1010,6 @@ class FileModal(discord.ui.Modal):
         await self.handler(interaction, self.upload.values[0])
 
 
-class CreatorModal(discord.ui.Modal, title="Complete your onboarding"):
-    ig = discord.ui.TextInput(label="Instagram username (the one you were invited with)", max_length=40)
-    tiktok = discord.ui.TextInput(label="TikTok username", max_length=40)
-    email = discord.ui.TextInput(label="Email (use the same one you booked your call with)", max_length=120)
-    phone = discord.ui.TextInput(label="Phone number", max_length=30)
-
-    async def on_submit(self, interaction):
-        await act_creator_onboard(interaction, self.ig.value, self.tiktok.value, self.email.value, self.phone.value)
-
-
-async def act_creator_onboard(interaction, ig, tiktok, email, phone):
-    conn = db()
-    channel = await review_channel()
-    try:
-        r = core.onboard_creator(conn, ig, tiktok, email, phone, interaction.user.id)
-    except core.NotInvited:
-        await channel.send(f"A creator ({interaction.user}) tried to onboard with Instagram @{core.norm_handle(ig)}, "
-                           "but there is no scout submission with that name.", allowed_mentions=NO_PINGS)
-        return await say(interaction, "We couldn't find an invitation for that Instagram name. "
-                                      "Check the spelling, or contact the person who invited you.")
-    except core.AlreadyClaimed:
-        await channel.send(f"A creator ({interaction.user}) tried to use an Instagram name that is already onboarded: "
-                           f"@{core.norm_handle(ig)}. Please check.", allowed_mentions=NO_PINGS)
-        return await say(interaction, "That invitation has already been used. Please contact your recruiter if this is a mistake.")
-    except ValueError as e:
-        return await say(interaction, str(e))
-    effective = r["sub"]["status"] == "effective"
-    if effective:
-        await set_creator_access(interaction.user.id, True)
-    cr = conn.execute("SELECT manager_id FROM creators WHERE handle=?", (r["handle"],)).fetchone()
-    mgr = label(conn, cr["manager_id"]) if cr and cr["manager_id"] else None
-    bk = r["booking"]
-    admin_line = (f"Creator onboarded: TikTok @{r['handle']}, Instagram @{r['sub']['ig_username']}, scout <@{r['sub']['scout_id']}>, "
-                  f"manager {mgr or 'not assigned yet (no booked call with this email)'}.")
-    await channel.send(admin_line, allowed_mentions=NO_PINGS)
-    if not effective:
-        return await say(interaction, f"Thanks, @{r['handle']}! You're connected. You'll get access to the rest of the "
-                                      "server as soon as your creator status is confirmed.")
-    if mgr and bk:
-        when = ""
-        try:
-            ts = int(datetime.datetime.fromisoformat(bk["start_time"].replace("Z", "+00:00")).timestamp())
-            when = f" Your call is <t:{ts}:F>."
-        except (ValueError, AttributeError):
-            pass
-        return await say(interaction, f"You're all set, @{r['handle']}! Your manager is **{mgr}**.{when}")
-    await say(interaction, f"You're all set, @{r['handle']}! Once you book your intro call with the same email, "
-                           "your manager is assigned automatically.")
-
-
-class CreatorPanel(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Complete onboarding", style=discord.ButtonStyle.primary, custom_id="creator:onboard")
-    async def onboard_btn(self, interaction, button):
-        await interaction.response.send_modal(CreatorModal())
-
-
 # ---------- panels (the buttons people actually press) ----------
 class ScoutPanel(discord.ui.View):
     def __init__(self):
@@ -1142,6 +1090,22 @@ class AdminPanel(discord.ui.View):
     async def schedule_btn(self, interaction, button):
         await interaction.response.send_modal(ScheduleModal())
 
+    @discord.ui.button(label="Creator roster", style=discord.ButtonStyle.secondary, custom_id="admin:roster", row=3)
+    async def roster_btn(self, interaction, button):
+        await interaction.response.send_modal(FileModal("Upload creator roster (CSV)", creator_server.act_import_roster))
+
+    @discord.ui.button(label="Live stats", style=discord.ButtonStyle.secondary, custom_id="admin:livestats", row=3)
+    async def livestats_btn(self, interaction, button):
+        await interaction.response.send_modal(FileModal("Upload TikTok LIVE stats (CSV)", creator_server.act_upload_stats))
+
+    @discord.ui.button(label="Run nudges", style=discord.ButtonStyle.secondary, custom_id="admin:nudges", row=3)
+    async def nudges_btn(self, interaction, button):
+        await creator_server.act_run_nudges(interaction)
+
+    @discord.ui.button(label="Weekly report", style=discord.ButtonStyle.secondary, custom_id="admin:weekly", row=3)
+    async def weekly_btn(self, interaction, button):
+        await creator_server.act_weekly_report(interaction)
+
     @discord.ui.button(label="Backup", style=discord.ButtonStyle.secondary, custom_id="admin:backup", row=1)
     async def backup_btn(self, interaction, button):
         await act_backup(interaction)
@@ -1220,19 +1184,6 @@ async def payouts(interaction: discord.Interaction, month: str | None = None):
 async def linkcreator(interaction: discord.Interaction, tiktok: str, instagram: str,
                       email: str | None = None, phone: str | None = None):
     await act_link(interaction, tiktok, instagram, email, phone)
-
-
-if CREATOR_GUILD_ID:
-    @bot.tree.command(name="setupcreators", description="Post the creator onboarding button here",
-                      guild=discord.Object(id=int(CREATOR_GUILD_ID)))
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setupcreators(interaction: discord.Interaction):
-        e = discord.Embed(title="Welcome to Hierarchy", color=GOLD,
-                          description="Tap the button below to complete your onboarding. "
-                                      "Your details are private and only visible to the Hierarchy team.")
-        await interaction.channel.send(embed=e, view=CreatorPanel())
-        await say(interaction, "Creator panel posted.")
 
 
 @bot.tree.command(name="assignmanager", description="Manually set a creator's manager (normally automatic from the booking)")

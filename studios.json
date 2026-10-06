@@ -1,0 +1,23 @@
+{
+  "_instructions": "Fill this in with the rates and contact details each studio gave you. Nothing here is a real rate until you enter it. Each room looks like {\"name\": \"Studio A\", \"rate\": \"$__ / hour\", \"minimum\": \"__ hours\", \"includes\": [\"engineer\", \"...\"]}. booking_email is where the bot sends requests. booking_contact and referral_wording are what the artist sees once a person taps Available. Update rates_as_of whenever the studio changes its rates, then run /setup-studio again.",
+  "studios": [
+    {
+      "id": "paramount",
+      "name": "Paramount Recording Studios",
+      "booking_email": "",
+      "booking_contact": "",
+      "referral_wording": "",
+      "rates_as_of": "",
+      "rooms": []
+    },
+    {
+      "id": "weddington",
+      "name": "Weddington",
+      "booking_email": "",
+      "booking_contact": "",
+      "referral_wording": "",
+      "rates_as_of": "",
+      "rooms": []
+    }
+  ]
+}

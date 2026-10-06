@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS creator_stats (
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 
+-- every creator in TikTok's "Manage creators" export (the managed-creator list), refreshed on each import
+CREATE TABLE IF NOT EXISTS managed_creators (
+    handle         TEXT PRIMARY KEY,
+    tiktok_status  TEXT,                 -- pending | effective | terminated, straight from TikTok
+    manager_email  TEXT,
+    last_live      TEXT,
+    full_name      TEXT,                 -- the next four come from the roster you upload (they are the "on file" details)
+    email          TEXT,
+    phone          TEXT,
+    kind           TEXT,                 -- artist | model
+    seen_at        TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- everyone who gets paid (scouts by Discord id, managers by name key) and whether their W-9 is on file
 CREATE TABLE IF NOT EXISTS payees (
     payee_id    TEXT PRIMARY KEY,
@@ -119,7 +132,11 @@ def connect(path: str) -> sqlite3.Connection:
                           ("submissions", "decision", "TEXT NOT NULL DEFAULT 'review'"),
                           ("scouts", "agreement_version", "TEXT"), ("scouts", "agreed_at", "TEXT"), ("scouts", "agreement_text", "TEXT"), ("scouts", "forfeited", "INTEGER NOT NULL DEFAULT 0"), ("submissions", "exported_at", "TEXT"),
                           ("payees", "w9_envelope_id", "TEXT"),
-                          ("creators", "email", "TEXT"), ("creators", "phone", "TEXT"), ("creators", "discord_id", "TEXT")]:
+                          ("creators", "email", "TEXT"), ("creators", "phone", "TEXT"), ("creators", "discord_id", "TEXT"),
+                          ("creators", "full_name", "TEXT"), ("creators", "kind", "TEXT"),
+                          ("creators", "phone_verified", "INTEGER NOT NULL DEFAULT 0"),
+                          ("creators", "member_status", "TEXT"), ("creators", "checkin_channel_id", "TEXT"),
+                          ("creators", "approved_at", "TEXT"), ("creators", "weekly_goal_hours", "REAL")]:
         if col not in [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     conn.execute("UPDATE submissions SET status = CASE status WHEN 'signed' THEN 'effective' "
@@ -503,6 +520,7 @@ def parse_creators_export(data: bytes, filename: str):
 
     c_user, c_rel = col("creator's username"), col("relationship status")
     c_days, c_last, c_notes = col("valid go live days"), col("last live"), col("notes")
+    c_mgr = col("creator network manager")
 
     def num(v):
         try:
@@ -520,7 +538,8 @@ def parse_creators_export(data: bytes, filename: str):
                     "relationship": str(r[c_rel]).strip() if c_rel else "",
                     "valid_days": num(r[c_days]) if c_days else 0.0,
                     "last_live": "" if last in ("", "-") else last,
-                    "notes": str(r[c_notes]).strip() if c_notes else ""})
+                    "notes": str(r[c_notes]).strip() if c_notes else "",
+                    "manager": str(r[c_mgr]).strip().lower() if c_mgr else ""})
     return out
 
 
@@ -583,9 +602,18 @@ def link_handles(conn, tiktok_handle, ig_username, email=None, phone=None):
 def sync_creators(conn, rows):
     """Set each submission's status to match TikTok's relationship status (it can change either way).
     Returns {'changed': [(submission_id, ig_username, scout_id, old, new)], 'registered': [...], 'unmatched': [...]}."""
-    report = {"changed": [], "registered": [], "unmatched": [], "same": 0}
+    report = {"changed": [], "registered": [], "unmatched": [], "same": 0, "managed_changed": []}
     for row in rows:
         handle = row["handle"]
+        new_ts = derive_status(row)
+        old_ts = conn.execute("SELECT tiktok_status FROM managed_creators WHERE handle=?", (handle,)).fetchone()
+        old_ts = old_ts["tiktok_status"] if old_ts else None
+        conn.execute("INSERT INTO managed_creators(handle, tiktok_status, manager_email, last_live, seen_at) "
+                     "VALUES (?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(handle) DO UPDATE SET tiktok_status=excluded.tiktok_status, "
+                     "manager_email=excluded.manager_email, last_live=excluded.last_live, seen_at=CURRENT_TIMESTAMP",
+                     (handle, new_ts, row.get("manager") or None, row.get("last_live") or None))
+        if old_ts != new_ts:
+            report["managed_changed"].append((handle, old_ts, new_ts))
         linked = conn.execute("SELECT ig_username FROM creators WHERE handle=?", (handle,)).fetchone()
         sub = get_submission_by_ig(conn, linked["ig_username"]) if linked and linked["ig_username"] else None
         if sub is None:                       # same name on both platforms
@@ -609,6 +637,7 @@ def sync_creators(conn, rows):
                 conn.execute("UPDATE creators SET ig_username=? WHERE handle=?", (sub["ig_username"], handle))
                 conn.commit()
                 report["registered"].append(handle)
+    conn.commit()
     return report
 
 

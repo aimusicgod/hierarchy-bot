@@ -1,0 +1,252 @@
+"""Creators server: one entry point for bot.py. Everything that happens inside the creators server lives in the cs_* modules."""
+import datetime
+import json
+import os
+
+import discord
+from discord import app_commands
+from discord.ext import tasks
+
+import academy
+import core
+import creators
+import nudges
+import messaging
+import cs_ctx
+from cs_ctx import ctx, get_channel
+import cs_apply
+import cs_academy
+import cs_nudges
+import cs_setup
+import cs_studio
+
+# re-exported for bot.py
+on_member_join = cs_apply.on_member_join
+on_status_change = cs_apply.on_status_change
+act_import_roster = cs_nudges.act_import_roster
+act_upload_stats = cs_nudges.act_upload_stats
+act_run_nudges = cs_nudges.act_run_nudges
+act_weekly_report = cs_nudges.act_weekly_report
+configured = cs_ctx.configured
+init = cs_ctx.init
+
+
+def web_routes():
+    return [("post", "/sms", cs_apply.sms_hook)]
+
+
+def needs_web_server():
+    return messaging.sms_configured()
+
+
+async def _post_panel(channel, key, embed, view):
+    """Post a panel once; later runs edit the same message."""
+    if channel is None or not hasattr(channel, "send"):
+        return None
+    conn = ctx.db()
+    try:
+        mid = core.get_setting(conn, f"cg:post:{key}")
+        if mid:
+            try:
+                msg = await channel.fetch_message(int(mid))
+                await msg.edit(embed=embed, view=view)
+                return msg
+            except discord.HTTPException:
+                pass
+        msg = await channel.send(embed=embed, view=view)
+        core.set_setting(conn, f"cg:post:{key}", msg.id)
+        return msg
+    finally:
+        conn.close()
+
+
+async def post_apply_panel(channel):
+    return await _post_panel(channel, "apply", cs_apply.apply_embed(), cs_apply.ApplyPanelView())
+
+
+async def post_studio_panel(channel):
+    return await _post_panel(channel, "studio", cs_studio.panel_embed(), cs_studio.StudioPanelView())
+
+
+def register(bot):
+    """Called once from bot.setup_hook. Registers the buttons, panels and commands."""
+    bot.add_dynamic_items(cs_apply.CAppButton, cs_academy.LessonButton, cs_studio.StudioButton, cs_nudges.NudgeButton)
+    bot.add_view(cs_apply.ApplyPanelView())
+    bot.add_view(cs_studio.StudioPanelView())
+    # ----- staff server commands (admin) -----
+    @bot.tree.command(name="nudgeskip", description="Pause check-ins for a creator (on a break)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guild_only()
+    @app_commands.describe(handle="Their TikTok username", days="How many days to pause (blank = until you unpause)", note="Why")
+    async def nudgeskip(interaction: discord.Interaction, handle: str, days: int | None = None, note: str = ""):
+        until = (datetime.datetime.now(ctx.org_tz).date() + datetime.timedelta(days=days)).isoformat() if days else None
+        conn = ctx.db()
+        nudges.skip(conn, handle, until, note)
+        conn.close()
+        await ctx.say(interaction, f"Check-ins paused for @{core.norm_handle(handle)}" + (f" until {until}." if until else " until you unpause."))
+
+    @bot.tree.command(name="nudgeunskip", description="Resume check-ins for a creator")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def nudgeunskip(interaction: discord.Interaction, handle: str):
+        conn = ctx.db()
+        nudges.unskip(conn, handle)
+        conn.close()
+        await ctx.say(interaction, f"Check-ins resumed for @{core.norm_handle(handle)}.")
+
+    @bot.tree.command(name="setgoal", description="Set a creator's weekly LIVE goal in hours")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def setgoal(interaction: discord.Interaction, handle: str, hours: float):
+        if not 0 < hours <= 168:
+            return await ctx.say(interaction, "Hours per week must be between 0 and 168.")
+        conn = ctx.db()
+        nudges.set_goal(conn, handle, hours)
+        conn.close()
+        await ctx.say(interaction, f"Weekly goal for @{core.norm_handle(handle)} set to {hours:g} hours.")
+
+    if not ctx.guild_id:
+        return
+    gobj = discord.Object(id=int(ctx.guild_id))
+
+    # ----- creators server commands -----
+    @bot.tree.command(name="setup-server", description="Build or update the roles, channels and permissions of this server", guild=gobj)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_server(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            notes = await cs_setup.build_server(interaction.guild, post_apply_panel, post_studio_panel)
+        except discord.Forbidden:
+            return await ctx.say(interaction, "I don't have permission to do that. Give the bot's role **Administrator** in this "
+                                              "server (or Manage Roles, Manage Channels and Manage Webhooks) and try again.")
+        msg = "Done. Roles, channels and permissions are set up, and the welcome, rules, academy, apply and studio panels are posted."
+        msg += "\n\n**Next:** give yourself the **Admin** role (and managers the **Manager** role), and drag the bot's role to the top of " \
+               "Server Settings → Roles so it can manage the roles below it."
+        if notes:
+            msg += "\n\n" + "\n".join(f"• {n}" for n in notes)
+        await ctx.say(interaction, msg[:1900])
+
+    @bot.tree.command(name="setup-apply", description="Post the application panel in this channel", guild=gobj)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_apply(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await post_apply_panel(interaction.channel)
+        await ctx.say(interaction, "Application panel posted.")
+
+    @bot.tree.command(name="setup-studio", description="Post the studio booking panel in this channel", guild=gobj)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_studio(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await post_studio_panel(interaction.channel)
+        await ctx.say(interaction, "Studio panel posted.")
+
+    @bot.tree.command(name="publish-lesson", description="Publish (or update) a lesson in #lessons", guild=gobj)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(lesson="Which lesson file to publish")
+    async def publish_lesson(interaction: discord.Interaction, lesson: str):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            thread, updated = await cs_academy.publish_lesson(interaction.guild, lesson)
+        except ValueError as e:
+            return await ctx.say(interaction, str(e))
+        await ctx.say(interaction, f"{'Updated' if updated else 'Published'}: {thread.mention}")
+
+    @publish_lesson.autocomplete("lesson")
+    async def lesson_choices(interaction: discord.Interaction, current: str):
+        try:
+            lessons = academy.load_lessons()
+        except ValueError:
+            return []
+        cur = current.lower()
+        return [app_commands.Choice(name=f"Module {l['module']}: {l['title']}"[:100], value=l["id"])
+                for l in lessons.values() if cur in l["title"].lower() or cur in l["id"]][:25]
+
+    @bot.tree.command(name="progress", description="See your academy progress", guild=gobj)
+    async def progress(interaction: discord.Interaction):
+        conn = ctx.db()
+        try:
+            await ctx.say(interaction, embed=cs_academy.progress_embed(conn, interaction.user.id))
+        finally:
+            conn.close()
+
+
+# ---------- background jobs (every 10 minutes) ----------
+_started = False
+
+
+async def _safe(label, coro):
+    try:
+        await coro
+    except Exception as e:  # one failing job must never stop the others
+        print(f"[creators] {label} failed: {e}")
+
+
+async def _tick():
+    if not ctx.guild_id:
+        return
+    now = datetime.datetime.now(ctx.org_tz)
+    today, week = now.date().isoformat(), nudges.iso_week(now.date())
+    try:
+        cfg = nudges.load_config()
+    except (OSError, ValueError) as e:
+        print(f"[creators] nudge_rules.json problem: {e}")
+        cfg = None
+    conn = ctx.db()
+    try:
+        last_run = core.get_setting(conn, "nudge:last_run")
+        last_report = core.get_setting(conn, "report:last_week")
+        last_prompt = core.get_setting(conn, "prompt:last_week")
+        has_stats = nudges.stats_age_days(conn) is not None
+    finally:
+        conn.close()
+    if cfg:
+        if now.hour >= cfg.get("run_hour_local", 10) and last_run != today and has_stats:
+            await _safe("nudges", cs_nudges.run_nudges())
+        if (now.weekday() == nudges.weekday_index(cfg.get("weekly_report_weekday", "Monday"))
+                and now.hour >= cfg.get("weekly_report_hour_local", 9) and last_report != week and has_stats):
+            await _safe("weekly report", cs_nudges.post_weekly_report())
+    if now.weekday() == 0 and now.hour >= 9 and last_prompt != week:
+        await _safe("weekly prompt", _post_weekly_prompt(week))
+    await _safe("studio replies", cs_studio.poll_replies())
+    await _safe("studio follow-ups", cs_studio.send_followups())
+
+
+async def _post_weekly_prompt(week):
+    guild = await cs_ctx.creators_guild()
+    ch = get_channel(guild, "creator-lounge") if guild else None
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts.json")
+    with open(path, encoding="utf-8") as f:
+        prompts = json.load(f)
+    conn = ctx.db()
+    try:
+        idx = int(core.get_setting(conn, "prompt:idx", "0")) % len(prompts)
+        if ch is not None:
+            await ch.send(f"☀️ **Monday prompt**\n{prompts[idx]}", allowed_mentions=ctx.no_pings)
+            core.set_setting(conn, "prompt:idx", idx + 1)
+            core.set_setting(conn, "prompt:last_week", week)
+    finally:
+        conn.close()
+
+
+def start_loops(bot):
+    global _started
+    if _started or not ctx.guild_id:
+        return
+    _started = True
+
+    @tasks.loop(minutes=10)
+    async def tick():
+        await _safe("background jobs", _tick())
+
+    @tick.before_loop
+    async def before():
+        await bot.wait_until_ready()
+
+    tick.start()

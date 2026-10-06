@@ -1,0 +1,39 @@
+{
+  "id": "m1-welcome",
+  "module": 1,
+  "order": 1,
+  "title": "Welcome to the Hierarchy Academy",
+  "summary": "A quick tour of how the academy, check-ins and community work, so you know where everything is.",
+  "video_url": "",
+  "images": [],
+  "checklist": [
+    "Read #rules",
+    "Introduce yourself in #introductions",
+    "Post your goal for this week in #weekly-goals",
+    "Find your private check-in channel (it starts with checkin-)"
+  ],
+  "assignment": "Post your goal for this week in #weekly-goals, then reply in this thread with one thing you want to learn in the academy.",
+  "quiz": {
+    "pass_percent": 70,
+    "questions": [
+      {
+        "q": "Where do you find each academy lesson?",
+        "options": ["In #announcements", "In the #lessons forum, one post per lesson", "In your private check-in channel"],
+        "answer": 1,
+        "explanation": "Every lesson is its own post in the #lessons forum. Discussion and assignments happen in that lesson's thread."
+      },
+      {
+        "q": "What do you need to score to pass a quiz?",
+        "options": ["50%", "70%", "100%"],
+        "answer": 1,
+        "explanation": "The pass mark is 70%. If you miss it, you can retake the quiz after an hour."
+      },
+      {
+        "q": "What happens when you pass a module's quizzes?",
+        "options": ["Nothing, it's just for practice", "You get a Module Complete role and the next module unlocks", "You are removed from the server"],
+        "answer": 1,
+        "explanation": "You earn the Module Complete role, the next module unlocks, and your win is celebrated in #wins."
+      }
+    ]
+  }
+}

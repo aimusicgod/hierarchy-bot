@@ -1,0 +1,41 @@
+{
+  "auto_send": false,
+  "run_hour_local": 10,
+  "weekly_report_weekday": "Monday",
+  "weekly_report_hour_local": 9,
+  "default_weekly_goal_hours": 10,
+  "close_pct": 70,
+  "max_stats_age_days": 8,
+  "max_nudges_per_creator_per_week": 2,
+  "columns": {
+    "handle": ["creator's username", "handle", "tiktok", "tiktok handle", "tiktok username", "username"],
+    "last_live": ["last live", "last live date", "last live time"],
+    "week_hours": ["live duration this week", "live hours this week", "hours this week", "weekly hours", "this week hours"],
+    "week_days": ["valid days this week", "live days this week", "days this week"],
+    "hours_30d": ["live duration in l30d", "live duration(h)", "live duration (h)"],
+    "days_30d": ["valid go live days in l30d", "valid days(d)", "valid days"]
+  },
+  "rules": [
+    {
+      "id": "no_live_5_days",
+      "type": "days_since_live",
+      "min_days": 5,
+      "messages": [
+        "Hi {name}! It's been {days} days since your last LIVE and we've been thinking of you. Is there anything we can do to help you get back on? Even a short one counts. - Hierarchy Music",
+        "Hey {name}, just checking in. Your last LIVE was {days} days ago. Everything okay? If you need ideas, a time that works, or a hand with anything, we're here. - Hierarchy Music",
+        "Hi {name}! We miss seeing you LIVE (last one was {days} days ago). Want to pick a time this week and we'll cheer you on? - Hierarchy Music"
+      ]
+    },
+    {
+      "id": "behind_weekly_goal",
+      "type": "weekly_pct_below",
+      "pct": 60,
+      "from_weekday": "Thursday",
+      "messages": [
+        "Hi {name}! Quick check-in: you're at {done} of your {goal} hours this week ({pct}%). There's still time, and a couple of good sessions would get you there. Need anything from us? - Hierarchy Music",
+        "Hey {name}, you've logged {done} hours this week toward your {goal}-hour goal. You're closer than you think! Let us know if we can help you plan your next LIVE. - Hierarchy Music",
+        "Hi {name}! Nice work so far: {done} hours down, {left} to go this week. If your schedule got tight, tell us and we can adjust the goal together. - Hierarchy Music"
+      ]
+    }
+  ]
+}
