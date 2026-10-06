@@ -1,0 +1,5 @@
+Data Month,Creator ID,Creator nickname,Handle,Creator Network manager,Group,Group manager,Is violative creators,The creator was Rookie at the time of first joining,Diamonds,Valid days(d),LIVE duration(h),Estimated bonus,Estimated bonus - Maintained tiers,Estimated bonus - Incremental revenue incentive,Estimated bonus - Activeness incentive,Estimated bonus - Ranked up
+202608,111,Test Creator One,testcreator1,Test Network,,,False,Yes,300000,20,50,200.00,120.00,0,80.00,0
+202608,222,Test Creator Two,testcreator2,Test Network,,,False,Yes,150000,12,30,100.00,60.00,0,40.00,0
+202608,333,Not Registered,notregistered,Test Network,,,False,Yes,1000,2,3,10.00,10.00,0,0,0
+,,,,,,,,,,,,,,,,

@@ -1,0 +1,7 @@
+discord.py>=2.6
+pandas
+openpyxl
+python-dotenv
+google-api-python-client
+google-auth
+google-auth-oauthlib
