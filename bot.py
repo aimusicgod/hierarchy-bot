@@ -353,12 +353,14 @@ class Bot(discord.Client):
         if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
             self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(f"[startup] staff server {GUILD_ID}: registered {len(synced)} commands")
         else:
             await self.tree.sync()
         if CREATOR_GUILD_ID:
             try:
-                await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
+                synced = await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
+                print(f"[startup] creators server {CREATOR_GUILD_ID}: registered {sorted(c.name for c in synced)}")
             except (discord.Forbidden, discord.HTTPException, ValueError) as e:
                 print(f"[creators] Couldn't register the creators-server commands ({e}). Is the bot invited to that server "
                       "(with the 'applications.commands' scope) and is CREATOR_GUILD_ID the right server ID?")
