@@ -356,7 +356,11 @@ class Bot(discord.Client):
         else:
             await self.tree.sync()
         if CREATOR_GUILD_ID:
-            await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
+            try:
+                await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
+            except (discord.Forbidden, discord.HTTPException, ValueError) as e:
+                print(f"[creators] Couldn't register the creators-server commands ({e}). Is the bot invited to that server "
+                      "(with the 'applications.commands' scope) and is CREATOR_GUILD_ID the right server ID?")
         creator_server.start_loops(self)
         if HMAC_KEYS or CALENDLY_KEY or CALCOM_SECRET or INTAKE_SECRET or creator_server.needs_web_server():  # webhooks arrive here from DocuSign / your scheduler
             app = web.Application()
