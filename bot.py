@@ -125,6 +125,10 @@ class DecisionButton(discord.ui.DynamicItem[discord.ui.Button], template=r"dec:(
     async def callback(self, interaction: discord.Interaction):
         conn = db()
         sub = core.set_decision(conn, self.sub_id, self.decision)
+        if not sub:
+            await say(interaction, "This card is out of date: that submission isn't in the database anymore "
+                                   "(the database was reset). Delete this message; new submissions will have working buttons.")
+            return
         await interaction.response.edit_message(embed=submission_embed(sub), view=review_view(self.sub_id, self.decision))
         word = "approved" if self.decision == "approved" else "not moving forward"
         await dm_scout(sub["scout_id"], f"Update on your submission @{sub['ig_username']}: {word}.")
@@ -153,6 +157,9 @@ class StatusButton(discord.ui.DynamicItem[discord.ui.Button], template=r"sub:(?P
         conn = db()
         core.set_submission_status(conn, self.sub_id, self.status)
         sub = core.get_submission(conn, self.sub_id)
+        if not sub:
+            await say(interaction, "This card is out of date: that submission isn't in the database anymore. Delete this message.")
+            return
         await interaction.response.edit_message(embed=submission_embed(sub), view=review_view(self.sub_id, self.status))
         await dm_scout(sub["scout_id"], f"Update on your submission @{sub['ig_username']}: it is now {core.STATUS_LABELS[self.status]}.")
         if self.status == "effective":
@@ -206,6 +213,16 @@ def admin_panel_embed():
                                      "Import monthly earnings for the 5% payouts.")
 
 
+def same_embed(msg, embed):
+    """True when the posted message already shows exactly this embed, so we can skip editing it
+    (Discord rate-limits edits, and every restart used to re-edit every post)."""
+    if not msg.embeds:
+        return False
+    a, b = msg.embeds[0].to_dict(), embed.to_dict()
+    keys = ("title", "description", "fields", "color")
+    return all(a.get(k) == b.get(k) for k in keys)
+
+
 async def sync_post(key, channel_id, embed, view=None):
     """Post once; on later starts edit that same message so the text is always current."""
     if not channel_id:
@@ -217,7 +234,10 @@ async def sync_post(key, channel_id, embed, view=None):
         if mid:
             try:
                 msg = await channel.fetch_message(int(mid))
-                await msg.edit(embed=embed, view=view)
+                if not same_embed(msg, embed):
+                    await msg.edit(embed=embed, view=view)
+                elif view is not None:
+                    await msg.edit(view=view)   # re-attach buttons; cheap and keeps them working
                 return
             except discord.NotFound:
                 pass
@@ -273,9 +293,11 @@ async def sync_scout_channel():
         if in_order:
             for i, e in enumerate(embeds):
                 msg = await channel.fetch_message(int(ids[i]))
-                await msg.edit(embed=e)
+                if not same_embed(msg, e):
+                    await msg.edit(embed=e)
             msg = await channel.fetch_message(int(ids[-1]))
-            await msg.edit(embed=scout_panel_embed(), view=ScoutPanel())
+            if not same_embed(msg, scout_panel_embed()):
+                await msg.edit(embed=scout_panel_embed(), view=ScoutPanel())
             return
         async for m in channel.history(limit=200):
             if m.author.id == bot.user.id:
