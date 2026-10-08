@@ -55,7 +55,7 @@ async def run_checks():
         except Exception as ex:
             print(f"[creators] unlock notice failed for {h}: {ex}", flush=True)
     if missed:
-        ch = await staff_channel()
+        ch = await staff_channel("alerts")
         lines = [f"@{c['handle']}: {int(p['days'])} of {p['need_days']} valid LIVE days after {unlock.rules(cfg)['window_days']}+ days" for c, p in missed]
         await ch.send("⏰ **Unlock quota missed** (still locked out of the full community). A manager should reach out, "
                       "or use /unlock-creator to open it up for them:\n" + "\n".join(lines)[:1800], allowed_mentions=ctx.no_pings)

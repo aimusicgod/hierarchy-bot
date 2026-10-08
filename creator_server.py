@@ -156,7 +156,7 @@ def register(bot):
         except discord.Forbidden:
             return await ctx.say(interaction, "I don't have permission to do that. Give the bot's role **Administrator** in this "
                                               "server (or Manage Roles, Manage Channels and Manage Webhooks) and try again.")
-        msg = "Done. Roles, channels and permissions are set up, and the welcome, rules, academy, apply, studio and username panels are posted."
+        msg = "Done. Roles, channels and permissions are set up, and the welcome, rules, academy, apply, studio and username panels are posted, plus a private STAFF area (approvals, alerts, reports, backups)."
         msg += "\n\n**Next:** give yourself the **Admin** role (and managers the **Manager** role), and drag the bot's role to the top of " \
                "Server Settings → Roles so it can manage the roles below it."
         if notes:
@@ -222,10 +222,17 @@ async def _safe(label, coro):
 
 
 async def _nightly_backup(now):
-    """Once a night (after 3am), post a copy of the whole database to the private channel in BACKUP_CHANNEL_ID.
-    Keeps the newest 14; older ones are deleted so personal details don't pile up in Discord."""
+    """Once a night (after 3am), post a copy of the whole database to the private #staff-backups channel (or to the channel in
+    BACKUP_CHANNEL_ID if you set one). Keeps the newest 14; older ones are deleted so personal details don't pile up in Discord."""
+    if now.hour < 3:
+        return
     cid = os.getenv("BACKUP_CHANNEL_ID")
-    if not cid or now.hour < 3:
+    if cid:
+        ch = ctx.bot.get_channel(int(cid)) or await ctx.bot.fetch_channel(int(cid))
+    else:
+        guild = await cs_ctx.creators_guild()
+        ch = cs_ctx.get_channel(guild, "staff-backups") if guild else None
+    if ch is None:
         return
     today = now.date().isoformat()
     conn = ctx.db()
@@ -237,7 +244,6 @@ async def _nightly_backup(now):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, name)
             core.backup_to(conn, path)
-            ch = ctx.bot.get_channel(int(cid)) or await ctx.bot.fetch_channel(int(cid))
             if os.path.getsize(path) > 24 * 1024 * 1024:
                 await ch.send("⚠️ The database is now too big to back up through Discord. Time to move backups elsewhere.")
             else:

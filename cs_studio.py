@@ -86,7 +86,7 @@ class RequestModal(ui.Modal):
             note = await _email_studio(conn, req, s, first)
             studio.update_request(conn, req_id, email_note=note, status="emailed" if note == "emailed" else "new")
             req = studio.get_request(conn, req_id)
-            msg = await (await staff_channel()).send(embed=staff_embed(req, s, artist), view=staff_view(req_id),
+            msg = await (await staff_channel("approvals")).send(embed=staff_embed(req, s, artist), view=staff_view(req_id),
                                                      allowed_mentions=ctx.no_pings)
             studio.update_request(conn, req_id, staff_msg_id=str(msg.id))
         finally:
@@ -200,7 +200,7 @@ async def _refresh_card(req_id, interaction=None, closed=False):
     if interaction is not None and interaction.message and interaction.message.id and req["staff_msg_id"] == str(interaction.message.id):
         return await interaction.edit_original_response(embed=embed, view=view)
     if req["staff_msg_id"]:
-        ch = await staff_channel()
+        ch = await staff_channel("approvals")
         try:
             msg = await ch.fetch_message(int(req["staff_msg_id"]))
             await msg.edit(embed=embed, view=view)
@@ -288,7 +288,7 @@ class BookedModal(ui.Modal, title="Your session date"):
         await ctx.say(interaction, f"Got it! Have a great session on **{d.strftime('%B %d, %Y')}**. 🎙️ "
                                    "We'll check in afterwards.")
         await _refresh_card(self.req_id)
-        await (await staff_channel()).send(f"📅 Studio request #{self.req_id}: the artist says they booked for {d.isoformat()}.",
+        await (await staff_channel("approvals")).send(f"📅 Studio request #{self.req_id}: the artist says they booked for {d.isoformat()}.",
                                            allowed_mentions=ctx.no_pings)
 
 
@@ -299,7 +299,7 @@ async def record_session(interaction, req_id, happened):
     finally:
         conn.close()
     await interaction.edit_original_response(content="Thanks for letting us know!", view=None)
-    await (await staff_channel()).send(f"{'✅' if happened else '❌'} Studio request #{req_id}: session "
+    await (await staff_channel("approvals")).send(f"{'✅' if happened else '❌'} Studio request #{req_id}: session "
                                        f"{'happened' if happened else 'did not happen'}.", allowed_mentions=ctx.no_pings)
     await _refresh_card(req_id)
 
@@ -325,7 +325,7 @@ async def poll_replies():
         finally:
             conn.close()
         await _refresh_card(req_id)
-        await (await staff_channel()).send(f"📬 **{sender}** replied to studio request #{req_id}. Read it on the request card "
+        await (await staff_channel("approvals")).send(f"📬 **{sender}** replied to studio request #{req_id}. Read it on the request card "
                                            "and tap Available, Suggest other time or Not available.",
                                            allowed_mentions=ctx.no_pings)
 

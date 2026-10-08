@@ -28,18 +28,23 @@ LAYOUT = [
                       ("model-lounge", "text", "model", False, 5), ("shoot-feedback", "text", "model", False, 10),
                       ("bookings", "text", "model", False, 10)]),
     ("CHECK-INS", [("weekly-goals", "text", "member", False, 10)]),
+    # staff only: "admin" = the Admin role, "staff" = Admin and Manager
+    ("STAFF", [("staff-approvals", "text", "admin", False, 0), ("staff-alerts", "text", "staff", False, 0),
+               ("staff-reports", "text", "admin", False, 0), ("staff-backups", "text", "admin", False, 0)]),
 ]
 
 
 def _who_roles(guild, who):
     if who == "everyone":
         return [guild.default_role]
+    if who in ("admin", "staff"):
+        return []                               # nobody but the staff roles added below
     name = {"member": ROLE_MEMBER, "unlocked": ROLE_UNLOCKED, "artist": ROLE_ARTIST_TRACK, "model": ROLE_MODEL_TRACK}[who]
     return [get_role(guild, name)]
 
 
 CATEGORY_WHO = {"START HERE": ["everyone"], "HIERARCHY": ["member"], "ACADEMY": ["unlocked"],
-                "CRAFT TRACKS": ["artist", "model"], "CHECK-INS": ["member"]}
+                "CRAFT TRACKS": ["artist", "model"], "CHECK-INS": ["member"], "STAFF": ["staff"]}
 
 
 def category_overwrites(guild, who_list):
@@ -60,7 +65,7 @@ def category_overwrites(guild, who_list):
 def overwrites(guild, kind, who, read_only):
     ow = {guild.default_role: PO(view_channel=False)}
     me = guild.me
-    staff = [r for r in (get_role(guild, ROLE_ADMIN), get_role(guild, ROLE_MANAGER)) if r]
+    staff = [r for r in (get_role(guild, ROLE_ADMIN), None if who == "admin" else get_role(guild, ROLE_MANAGER)) if r]
     for r in _who_roles(guild, who):
         if r is None:
             continue
@@ -185,6 +190,8 @@ async def build_server(guild, post_apply, post_studio, post_username=None):
             except (discord.HTTPException, TypeError, ValueError) as e:
                 notes.append(f"I couldn't set up #{name} ({e}). You can create it by hand and run /setup-server again.")
         await cat.edit(overwrites=category_overwrites(guild, CATEGORY_WHO.get(cat_name, ["member"])))
+    for ch_name, (title, text) in T.STAFF_NOTES.items():
+        await _post(guild, ch_name, ch_name, discord.Embed(title=title, description=text, color=ctx.gold))
     await _post(guild, "welcome", "welcome", discord.Embed(title=T.WELCOME_TITLE, description=T.WELCOME_TEXT, color=ctx.gold))
     await _post(guild, "rules", "rules", discord.Embed(title=T.RULES_TITLE, description=T.RULES_TEXT, color=ctx.gold))
     await _post(guild, "academy-start", "academy", discord.Embed(title=T.ACADEMY_TITLE, description=T.ACADEMY_TEXT, color=ctx.gold))

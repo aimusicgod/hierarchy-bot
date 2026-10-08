@@ -115,7 +115,7 @@ async def submit_request(interaction, platform, new_name):
         except ValueError as e:
             return await ctx.say(interaction, str(e))
         cr = usernames.creator_by_discord(conn, interaction.user.id)
-        ch = await staff_channel()
+        ch = await staff_channel("approvals")
         await ch.send(embed=request_embed(req, cr), view=request_view(req["id"]), allowed_mentions=ctx.no_pings)
     finally:
         conn.close()

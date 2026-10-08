@@ -112,7 +112,22 @@ FAQS_TOPIC = "Answers to common questions."
 
 WEEKLY_GOALS_TOPIC = "Post your goal for the week here. Your private check-in channel is separate."
 
+STAFF_NOTES = {
+    "staff-approvals": ("Approvals (admins)", "Things that need an admin's decision: new applications, check-in messages to approve, "
+                        "username changes, studio requests. Nothing goes to a creator until someone taps Approve or Send here."),
+    "staff-alerts": ("Alerts (admins and managers)", "Things a manager should act on: 📞 creators who haven't gone LIVE in 7+ days, creators who "
+                     "can't reach the monthly minimum, and ⏰ people past their 30-day unlock window. Tap **Contacted** once you've reached them."),
+    "staff-reports": ("Reports (admins)", "The monthly goals report (who is on pace, behind, or can't reach the minimum), the active-creator "
+                      "percentage and the top 10. It posts every Monday after you upload the TikTok file, or tap Weekly report in the admin panel. "
+                      "Manager results are in here, so this one is admins only."),
+    "staff-backups": ("Backups (admins)", "A copy of the whole database is posted here every night. It contains creator contact details, so keep this channel private. The newest 14 are kept."),
+}
+
 TOPICS = {
+    "staff-approvals": "Admins: applications and messages waiting for a decision.",
+    "staff-alerts": "Admins and managers: people to call or reach out to.",
+    "staff-reports": "Admins: monthly goals, manager and top 10 reports.",
+    "staff-backups": "Admins: nightly database backups. Private.",
     "welcome": "Start here.",
     "apply": "Apply as an Artist or Model.",
     "faqs": FAQS_TOPIC,

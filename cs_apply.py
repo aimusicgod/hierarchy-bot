@@ -22,7 +22,7 @@ ROLE_HINT = ("I couldn't change their roles. In the creators server, open Server
 
 # ---------- reaching creators ----------
 async def _alert(text):
-    ch = await ctx.review_channel()
+    ch = await staff_channel("alerts")
     await ch.send(text[:1900], allowed_mentions=ctx.no_pings)
 
 
@@ -263,7 +263,7 @@ def decision_view(app_id, current=None):
 
 
 async def post_review_card(app, ev):
-    ch = await ctx.review_channel()
+    ch = await staff_channel("approvals")
     msg = await ch.send(embed=review_embed(app, ev), view=decision_view(app["id"]), allowed_mentions=ctx.no_pings)
     conn = ctx.db()
     conn.execute("UPDATE creator_apps SET review_msg_id=? WHERE id=?", (str(msg.id), app["id"]))

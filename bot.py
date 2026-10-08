@@ -70,6 +70,7 @@ async def review_channel():
     return bot.get_channel(REVIEW_CHANNEL_ID) or await bot.fetch_channel(REVIEW_CHANNEL_ID)
 
 
+
 async def dm_scout(scout_id, text):
     try:
         user = await bot.fetch_user(int(scout_id))

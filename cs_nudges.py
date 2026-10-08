@@ -11,7 +11,7 @@ import usernames
 import managers
 from cs_apply import contact_creator
 import cs_ctx
-from cs_ctx import ctx, staff_channel, admin_check, get_channel
+from cs_ctx import ctx, staff_channel, admin_check, staff_check, get_channel
 
 
 # ---------- uploads (buttons on the staff admin panel) ----------
@@ -138,8 +138,9 @@ class NudgeButton(ui.DynamicItem[ui.Button], template=r"nudge:(?P<id>\d+):(?P<ac
         return cls(int(match["id"]), match["act"])
 
     async def interaction_check(self, interaction):
-        if not admin_check(interaction):
-            await ctx.say(interaction, "Admins only.")
+        allowed = staff_check(interaction) if self.act == "done" else admin_check(interaction)   # managers can log their own follow-ups
+        if not allowed:
+            await ctx.say(interaction, "Admins only." if self.act != "done" else "Admins and managers only.")
             return False
         return True
 
@@ -227,7 +228,8 @@ async def run_nudges(force=False):
     conn = ctx.db()
     try:
         new, notes = nudges.build_nudges(conn, cfg, today)
-        ch = await staff_channel()
+        ch = await staff_channel("approvals")
+        alerts = await staff_channel("alerts")
         for note in notes:
             await ch.send(f"ℹ️ Check-ins: {note}", allowed_mentions=ctx.no_pings)
         batch = [n for n in new if n["rule_id"] == "weekly_update"]
@@ -246,7 +248,8 @@ async def run_nudges(force=False):
                 nudges.mark_nudge(conn, n["id"], "sent", channel=used, decided_by="auto")
                 await ch.send(f"Auto-sent a check-in to @{n['handle']} via {used}.", allowed_mentions=ctx.no_pings)
             else:
-                msg = await ch.send(embed=nudge_embed(n, c, n["rule_id"]), view=nudge_view(n["id"], escalation=esc), allowed_mentions=ctx.no_pings)
+                msg = await (alerts if esc else ch).send(embed=nudge_embed(n, c, n["rule_id"]), view=nudge_view(n["id"], escalation=esc),
+                                                         allowed_mentions=ctx.no_pings)
                 conn.execute("UPDATE nudges SET review_msg_id=? WHERE id=?", (str(msg.id), n["id"]))
                 conn.commit()
         core.set_setting(conn, "nudge:last_run", today.isoformat())
@@ -331,7 +334,7 @@ async def post_top10():
 
 
 async def post_weekly_report():
-    ch = await staff_channel()
+    ch = await staff_channel("reports")
     await ch.send(embed=report_embed(), allowed_mentions=ctx.no_pings)
     await post_top10()
     conn = ctx.db()

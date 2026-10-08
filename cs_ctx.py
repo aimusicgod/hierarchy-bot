@@ -82,8 +82,16 @@ def remember_channel(name, channel):
     _store(f"cg:ch:{name}", channel.id)
 
 
-async def staff_channel():
-    """Where staff cards go: the nudge channel if set, otherwise the review channel."""
+async def staff_channel(kind="alerts"):
+    """Where staff cards go. kind: approvals (things an admin decides), alerts (things a manager acts on), reports.
+    Uses the staff channels in the creators server when they exist, otherwise the nudge channel, otherwise the review channel."""
+    try:
+        guild = await creators_guild()
+        ch = get_channel(guild, f"staff-{kind}") if guild else None
+        if ch is not None and hasattr(ch, "send"):
+            return ch
+    except discord.HTTPException:
+        pass
     if ctx.nudge_channel_id:
         try:
             return ctx.bot.get_channel(int(ctx.nudge_channel_id)) or await ctx.bot.fetch_channel(int(ctx.nudge_channel_id))
@@ -92,5 +100,15 @@ async def staff_channel():
     return await ctx.review_channel()
 
 
+def _has_role(interaction, name):
+    return any(r.name == name for r in getattr(interaction.user, "roles", []))
+
+
 def admin_check(interaction):
-    return interaction.user.guild_permissions.administrator
+    """Server admins, and anyone holding the Admin role."""
+    return interaction.user.guild_permissions.administrator or _has_role(interaction, ROLE_ADMIN)
+
+
+def staff_check(interaction):
+    """Admins and managers: for the follow-up cards a manager acts on."""
+    return admin_check(interaction) or _has_role(interaction, ROLE_MANAGER)
