@@ -1217,11 +1217,20 @@ async def build_hq(guild):
     category = discord.utils.get(guild.categories, name="HQ")
     if category is None:
         category = await guild.create_category("HQ", overwrites=private, reason="Hierarchy HQ setup")
+    manager_view = {**private, discord.utils.get(guild.roles, name="Manager"): discord.PermissionOverwrite(
+        view_channel=True, send_messages=True, read_message_history=True)}
     chans = {}
-    for key, name in (("panel", "admin-panel"), ("review", "review")):
+    # key, channel name, who sees it, what it is for
+    for key, name, who, topic in (
+            ("panel", "admin-panel", private, "Admins: uploads, payouts, backups. Nothing else goes here."),
+            ("review", "review", private, "Admins: scout applications and prospect cards to approve."),
+            ("approvals", "approvals", private, "Admins: things waiting for your yes/no (creator messages, username changes, studio requests, applications)."),
+            ("alerts", "manager-alerts", manager_view, "Admins and managers: creators to call or contact, each tagged with their manager."),
+            ("reports", "reports", private, "Admins: the weekly report (active %, who is behind, managers)."),
+            ("backups", "backups", private, "Admins: nightly database copy. Contains creator contact details, so keep it private.")):
         ch = discord.utils.get(guild.text_channels, name=name)
         if ch is None:
-            ch = await guild.create_text_channel(name, category=category, overwrites=private, reason="Hierarchy HQ setup")
+            ch = await guild.create_text_channel(name, category=category, overwrites=who, topic=topic, reason="Hierarchy HQ setup")
             notes.append(f"Created #{name}.")
         chans[key] = ch
     conn = db()
@@ -1232,7 +1241,8 @@ async def build_hq(guild):
         conn.close()
     await sync_post("admin_hq", chans["panel"].id, admin_panel_embed(), AdminPanel())
     await chans["review"].send("Scout applications and prospect review cards will arrive here from now on.", delete_after=60)
-    notes.append(f"Admin panel is in {chans['panel'].mention}. Review cards go to {chans['review'].mention}.")
+    notes.append(f"Admin panel is in {chans['panel'].mention}. Approvals, manager alerts, weekly reports and nightly backups now arrive in HQ too. "
+                 "Give managers the **Manager** role: they will only see #manager-alerts.")
     return notes
 
 

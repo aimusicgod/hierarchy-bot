@@ -84,7 +84,14 @@ def remember_channel(name, channel):
 
 async def staff_channel(kind="alerts"):
     """Where staff cards go. kind: approvals (things an admin decides), alerts (things a manager acts on), reports.
-    Uses the staff channels in the creators server when they exist, otherwise the nudge channel, otherwise the review channel."""
+    Uses the HQ server's channels once /setup-hq has made them, then the staff channels in the creators server,
+    then the nudge channel, then the review channel."""
+    hq = _stored(f"hq:{kind}")
+    if hq and str(hq).isdigit():
+        try:
+            return ctx.bot.get_channel(int(hq)) or await ctx.bot.fetch_channel(int(hq))
+        except discord.HTTPException:
+            pass
     try:
         guild = await creators_guild()
         ch = get_channel(guild, f"staff-{kind}") if guild else None

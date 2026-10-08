@@ -243,7 +243,7 @@ async def _nightly_backup(now):
     BACKUP_CHANNEL_ID if you set one). Keeps the newest 14; older ones are deleted so personal details don't pile up in Discord."""
     if now.hour < 3:
         return
-    cid = os.getenv("BACKUP_CHANNEL_ID")
+    cid = os.getenv("BACKUP_CHANNEL_ID") or cs_ctx._stored("hq:backups")
     if cid:
         ch = ctx.bot.get_channel(int(cid)) or await ctx.bot.fetch_channel(int(cid))
     else:
