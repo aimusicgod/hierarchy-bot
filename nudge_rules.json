@@ -8,12 +8,77 @@
   "max_stats_age_days": 8,
   "max_nudges_per_creator_per_week": 2,
   "columns": {
-    "handle": ["creator's username", "handle", "tiktok", "tiktok handle", "tiktok username", "username"],
-    "last_live": ["last live", "last live date", "last live time"],
-    "week_hours": ["live duration this week", "live hours this week", "hours this week", "weekly hours", "this week hours"],
-    "week_days": ["valid days this week", "live days this week", "days this week"],
-    "hours_30d": ["live duration in l30d", "live duration(h)", "live duration (h)"],
-    "days_30d": ["valid go live days in l30d", "valid days(d)", "valid days"]
+    "handle": [
+      "creator's username",
+      "handle",
+      "tiktok",
+      "tiktok handle",
+      "tiktok username",
+      "username"
+    ],
+    "last_live": [
+      "last live",
+      "last live date",
+      "last live time"
+    ],
+    "week_hours": [
+      "live duration this week",
+      "live hours this week",
+      "hours this week",
+      "weekly hours",
+      "this week hours"
+    ],
+    "week_days": [
+      "valid days this week",
+      "live days this week",
+      "days this week"
+    ],
+    "hours_30d": [
+      "live duration in l30d",
+      "live duration(h)",
+      "live duration (h)"
+    ],
+    "days_30d": [
+      "valid go live days in l30d",
+      "valid days(d)",
+      "valid days"
+    ],
+    "period": [
+      "data period"
+    ],
+    "diamonds": [
+      "diamonds"
+    ],
+    "live_hours": [
+      "live duration"
+    ],
+    "valid_days": [
+      "valid go live days"
+    ],
+    "streams": [
+      "live streams"
+    ],
+    "join_time": [
+      "join time"
+    ],
+    "diamonds_prev": [
+      "diamonds last month"
+    ],
+    "hours_prev": [
+      "live duration (hours) last month"
+    ],
+    "days_prev": [
+      "valid go live days last month"
+    ],
+    "creator_id": [
+      "creator id"
+    ],
+    "manager": [
+      "creator network manager"
+    ],
+    "days_since_join": [
+      "days since joining"
+    ]
   },
   "rules": [
     {
@@ -27,15 +92,90 @@
       ]
     },
     {
-      "id": "behind_weekly_goal",
-      "type": "weekly_pct_below",
-      "pct": 60,
-      "from_weekday": "Thursday",
+      "id": "manager_call_7_days",
+      "type": "escalate_to_manager",
+      "min_days": 7,
       "messages": [
-        "Hi {name}! Quick check-in: you're at {done} of your {goal} hours this week ({pct}%). There's still time, and a couple of good sessions would get you there. Need anything from us? - Hierarchy Music",
-        "Hey {name}, you've logged {done} hours this week toward your {goal}-hour goal. You're closer than you think! Let us know if we can help you plan your next LIVE. - Hierarchy Music",
-        "Hi {name}! Nice work so far: {done} hours down, {left} to go this week. If your schedule got tight, tell us and we can adjust the goal together. - Hierarchy Music"
+        "@{handle} has not gone LIVE in {days} days (last LIVE {last_live}). A manager should call or contact them to find out what's going on and how we can help."
+      ]
+    },
+    {
+      "id": "weekly_update",
+      "type": "weekly_update",
+      "from_weekday": "Monday",
+      "messages": [
+        "Hi {name}! Your Hierarchy Music weekly update: 💎 {diamonds} diamonds this month (goal: {diamonds_goal}+), 📅 {valid_days} of {valid_days_goal} valid LIVE days, ⏱ {month_hours} of {month_hours_goal} hours. {days_remaining} days left this month. Questions? Reach out to {contact}. - Hierarchy Music"
+      ]
+    },
+    {
+      "id": "month_goal_behind",
+      "type": "month_pace",
+      "status": "behind",
+      "messages": [
+        "Hi {name}! Quick check-in: you're at {valid_days} of {valid_days_goal} valid LIVE days and {month_hours} of {month_hours_goal} hours this month, with {days_remaining} days left. You need {valid_days_left} more valid days. Want help planning your next LIVEs? Reach out to {contact}. - Hierarchy Music",
+        "Hey {name}, a heads up: {valid_days} of {valid_days_goal} valid LIVE days so far this month and {days_remaining} days left. A few shorter LIVEs spread out will get you there. Let {contact} know if we can help. - Hierarchy Music"
+      ]
+    },
+    {
+      "id": "removal_warning",
+      "type": "month_pace",
+      "status": "critical",
+      "messages": [
+        "Important, {name}: this month you're at {valid_days} of the {valid_days_goal} required valid LIVE days and {month_hours} of {month_hours_goal} hours, with only {days_remaining} days left. Creators who don't meet the monthly minimums can be removed from the network. Please contact {contact} as soon as you can so we can talk it through. - Hierarchy Music"
+      ]
+    },
+    {
+      "id": "manager_month_risk",
+      "type": "escalate_to_manager",
+      "status": "critical",
+      "messages": [
+        "@{handle} can't realistically meet this month's minimums: {valid_days}/{valid_days_goal} valid days and {month_hours}/{month_hours_goal} hours with {days_remaining} days left. A manager should call or contact them today."
       ]
     }
-  ]
+  ],
+  "manager_contact_line": "a Hierarchy Music manager (message us in #support)",
+  "month_goals": {
+    "_note": "Your monthly minimums. Valid days and hours decide who stays active; diamonds decide the bonus. The danger line is set to 30% (TikTok's real shut-down line is 13%) so you have room to react.",
+    "min_valid_days": 8,
+    "min_hours": 20,
+    "min_diamonds": 100,
+    "max_realistic_hours_per_day": 5,
+    "behind_from_day": 8,
+    "behind_ratio_days": 0.4,
+    "behind_ratio_hours_per_day": 1.0,
+    "agency_active_floor_pct": 30,
+    "agency_active_warn_pct": 40
+  },
+  "announce_top10": false,
+  "announce_top10_show_diamonds": false,
+  "announce_top10_min_creators": 10,
+  "_unused_example_rule": {
+    "id": "behind_weekly_goal",
+    "type": "weekly_pct_below",
+    "pct": 60,
+    "from_weekday": "Thursday",
+    "messages": [
+      "Hi {name}! Quick check-in: you're at {done} of your {goal} hours this week ({pct}%). There's still time, and a couple of good sessions would get you there. Need anything from us? - Hierarchy Music",
+      "Hey {name}, you've logged {done} hours this week toward your {goal}-hour goal. You're closer than you think! Let us know if we can help you plan your next LIVE. - Hierarchy Music",
+      "Hi {name}! Nice work so far: {done} hours down, {left} to go this week. If your schedule got tight, tell us and we can adjust the goal together. - Hierarchy Music"
+    ]
+  },
+  "manager_rules": {
+    "_note": "Per-manager active percentage. A creator counts as active when they hit the valid-days AND hours minimums. Creators who joined less than min_tenure_days ago are left out, and managers with fewer than min_creators are only shown, never flagged. Your own email goes in owner_emails so creators assigned to you are not judged. Add manager emails and names under names.",
+    "warn_pct": 40,
+    "fire_pct": 30,
+    "min_creators": 5,
+    "min_tenure_days": 30,
+    "owner_emails": [
+      "hierarchymusicllc@gmail.com"
+    ],
+    "names": {}
+  },
+  "unlock": {
+    "_note": "New members see a small part of the server until they reach this quota, then everything opens. The window is counted from TikTok's 'Days since joining' column. Valid days are the better of this month so far and last month. Past window_days without reaching it, you get a staff alert (nobody is removed automatically). Set enabled to false to open everything on approval.",
+    "enabled": true,
+    "min_valid_days": 8,
+    "min_hours": 0,
+    "window_days": 30
+  }
 }

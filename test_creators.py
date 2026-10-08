@@ -141,6 +141,7 @@ print("twilio signature / email replies: OK")
 
 # --- nudges
 cfg = nudges.load_config()
+cfg["rules"].append(cfg["_unused_example_rule"])   # the weekly-hours rule is kept as an example, not active
 assert cfg["auto_send"] is False
 csv = ("Creator's username,Last LIVE,Live duration this week,Valid days this week\n"
        "alice,2026-09-28,2,1\nbob,2026-10-04,9,3\n").encode()
@@ -151,8 +152,10 @@ assert nudges.build_nudges(conn, cfg, today)[0] == [], "no stats yet"
 nudges.save_stats(conn, rows, now=T0)
 now = datetime.datetime(2026, 10, 8, 12, tzinfo=UTC)
 new, notes = nudges.build_nudges(conn, cfg, today, now)
-assert {n["rule_id"] for n in new} == {"no_live_5_days", "behind_weekly_goal"} and all(n["handle"] == "alice" for n in new), new
-assert all("Alice" in n["text"] for n in new) and not any("{" in n["text"] for n in new)
+assert {n["rule_id"] for n in new} == {"no_live_5_days", "behind_weekly_goal", "manager_call_7_days"} and all(n["handle"] == "alice" for n in new), new
+assert all(("Alice" in n["text"] or n["rule_id"].startswith("manager_")) for n in new) and not any("{" in n["text"] for n in new)
+esc = [n for n in new if nudges.is_escalation(n["rule_id"])]
+assert len(esc) == 1 and "@alice" in esc[0]["text"] and "10 days" in esc[0]["text"], esc
 assert nudges.build_nudges(conn, cfg, today, now)[0] == [], "one per creator per week per rule"
 assert nudges.build_nudges(conn, cfg, today + datetime.timedelta(days=9), now + datetime.timedelta(days=9))[0] == [], "stale stats must block"
 nudges.skip(conn, "alice", None); assert nudges.is_skipped(conn, "alice", today)
@@ -161,9 +164,15 @@ assert nudges.build_nudges(conn, cfg, today, now)[0] == [], "skip list"
 nudges.unskip(conn, "alice"); nudges.skip(conn, "alice", "2026-10-01"); assert not nudges.is_skipped(conn, "alice", today)
 nudges.unskip(conn, "alice")
 new, _ = nudges.build_nudges(conn, cfg, datetime.date(2026, 10, 6), now)   # Tuesday: weekly rule must not fire yet
-assert {n["rule_id"] for n in new} == {"no_live_5_days"}
+assert {n["rule_id"] for n in new} == {"no_live_5_days", "manager_call_7_days"}   # 8 days since last LIVE
+conn.execute("DELETE FROM nudges"); conn.commit()
+new, _ = nudges.build_nudges(conn, cfg, datetime.date(2026, 10, 4), now)   # 6 days: friendly nudge only, no manager alert
+assert "no_live_5_days" in {n["rule_id"] for n in new} and "manager_call_7_days" not in {n["rule_id"] for n in new}, new
+conn.execute("DELETE FROM nudges"); conn.commit()
+new, _ = nudges.build_nudges(conn, cfg, datetime.date(2026, 10, 5), now)   # exactly 7 days: manager alert fires
+assert "manager_call_7_days" in {n["rule_id"] for n in new}
 nudges.set_goal(conn, "alice", 2); rpt = nudges.weekly_report(conn, cfg)
-assert [x[0] for x in rpt["hit"]] == ["alice"], rpt
+assert rpt["no_data"], rpt   # the old weekly-hours file has no month-to-date columns
 print("nudges: OK")
 
 # --- academy
@@ -202,3 +211,147 @@ assert [x["id"] for x in studio.due_followups(conn, "2026-10-05")] == [r2]
 assert "introduction only" in studio.DISCLAIMER and "discount" not in studio.DISCLAIMER
 print("studio: OK")
 print("\nAll creators checks passed.")
+
+
+# --- monthly goals (real TikTok export shape: month-to-date, durations like "7h 41m 2s", no last-LIVE column)
+assert nudges.duration_hours("33h 27m 54s") > 33.4 and nudges.duration_hours("0s") == 0 and nudges.duration_hours("38m 16s") < 0.7
+cfg = nudges.load_config()
+mcsv = ("Data period,Creator ID,Creator's username,Diamonds,LIVE duration,Valid go LIVE days,LIVE streams,Diamonds last month\n"
+        "2026-10-01 ~ 2026-10-20,1,alice,50,5h 0m 0s,2,3,10\n"        # day 20: needs 6 more days in 11 left, 15h: behind
+        "2026-10-01 ~ 2026-10-20,2,bob,500,25h 0m 0s,9,20,10\n"       # met
+        "2026-10-01 ~ 2026-10-20,3,carl,0,0s,0,0,10\n").encode()      # nothing: cannot reach 8 days? needs 8 in 11 -> behind
+rows, found = nudges.parse_stats(mcsv, "m.csv", cfg)
+assert {"diamonds", "live_hours", "valid_days", "period"} <= set(found), found
+nudges.save_stats(conn, rows, now=datetime.datetime(2026, 10, 21, 12, tzinfo=UTC))
+st = {r["handle"]: r for r in conn.execute("SELECT * FROM live_stats")}
+assert nudges.month_status(st["bob"], cfg)["status"] == "met"
+assert nudges.month_status(st["alice"], cfg)["status"] == "behind", nudges.month_status(st["alice"], cfg)
+assert nudges.month_status(st["carl"], cfg)["status"] == "behind"
+assert st["carl"]["last_live"] == "2026-09-30"          # no LIVE all month: quiet since before the 1st
+late = dict(st["alice"]); late["period_end"] = "2026-10-28"                     # 3 days left, still needs 6 days
+assert nudges.month_status(late, cfg)["status"] == "critical"
+act = nudges.agency_active(conn, cfg)
+assert act["total"] == 3 and act["met"] == 1 and act["level"] == "ok"
+assert [t["handle"] for t in nudges.top_creators(conn)] == ["bob", "alice"]
+# last-LIVE is inferred from growth between uploads
+rows2, _ = nudges.parse_stats(mcsv.replace(b"2,3,10", b"2,4,10"), "m.csv", cfg)
+nudges.save_stats(conn, rows2, now=datetime.datetime(2026, 10, 22, 12, tzinfo=UTC))
+assert conn.execute("SELECT last_live FROM live_stats WHERE handle='alice'").fetchone()[0] == "2026-10-20"
+# nudges for a member: weekly update + behind-pace check-in + no staff alert yet; stays out of the weekly cap
+conn.execute("DELETE FROM nudges"); conn.commit()
+nudges.save_stats(conn, rows, now=datetime.datetime(2026, 10, 21, 12, tzinfo=UTC))
+a = conn.execute("SELECT handle FROM creators WHERE member_status='member' LIMIT 1").fetchone()
+assert a, "test needs an active member"
+if a:
+    conn.execute("UPDATE live_stats SET handle=? WHERE handle='alice'", (a["handle"],)); conn.commit()
+    new, _ = nudges.build_nudges(conn, cfg, datetime.date(2026, 10, 21), datetime.datetime(2026, 10, 21, 13, tzinfo=UTC))
+    ids = {n["rule_id"] for n in new}
+    assert {"weekly_update", "month_goal_behind"} <= ids and not any("{" in n["text"] for n in new), new
+    wu = [n for n in new if n["rule_id"] == "weekly_update"][0]["text"]
+    assert "50 diamonds" in wu and "2 of 8" in wu and "5 of 20" in wu, wu
+print("monthly goals: OK")
+
+# --- username changes
+import usernames
+c2 = core.connect(":memory:"); creators.ensure_schema(c2)
+c2.execute("INSERT INTO creators(handle, scout_id) VALUES ('oldname','s1')")
+c2.execute("UPDATE creators SET discord_id='111', member_status='member', ig_username='old_ig' WHERE handle='oldname'")
+c2.execute("INSERT INTO managed_creators(handle, tiktok_status) VALUES ('oldname','effective')")
+c2.execute("INSERT INTO ledger(month, handle, role, payee_id, amount_cents, gross_cents) VALUES ('202609','oldname','scout','s1',100,300)")
+c2.execute("INSERT INTO submissions(ig_username, ig_url, scout_id) VALUES ('old_ig','https://instagram.com/old_ig','s1')")
+c2.execute("INSERT INTO nudge_skip(handle) VALUES ('oldname')")
+c2.execute("INSERT INTO creators(handle) VALUES ('taken')")
+c2.commit()
+for bad in (("oldname", "taken"), ("nobody", "fresh"), ("oldname", "oldname"), ("oldname", "no spaces!")):
+    try: usernames.rename_tiktok(c2, *bad); raise SystemExit(f"should have refused {bad}")
+    except ValueError: pass
+assert usernames.rename_tiktok(c2, "@OldName", "newname", by=9) == "newname"
+for t in ("creators", "managed_creators", "ledger", "nudge_skip"):
+    assert c2.execute(f"SELECT COUNT(*) FROM {t} WHERE handle='newname'").fetchone()[0] == 1, t
+    assert c2.execute(f"SELECT COUNT(*) FROM {t} WHERE handle='oldname'").fetchone()[0] == 0, t
+usernames.rename_tiktok(c2, "newname", "newest")
+assert usernames.current_handle(c2, "oldname") == "newest"
+prev = usernames.previous_names(c2, "newest")
+assert [(p[0], p[1], p[2]) for p in prev] == [("tiktok", "newname", "newest"), ("tiktok", "oldname", "newname")], prev
+assert usernames.rename_instagram(c2, "newest", "@new_ig") == "new_ig"
+assert c2.execute("SELECT ig_username FROM submissions").fetchone()[0] == "new_ig"
+assert usernames.previous_names(c2, "oldname")[0][0] == "instagram"
+# Creator ID in an upload reveals a rename
+rows = [{"handle": "newest", "creator_id": "777"}]
+assert usernames.apply_export_renames(c2, rows) == ([], [])
+rows = [{"handle": "brandnew", "creator_id": "777"}, {"handle": "oldname", "creator_id": None}]
+ren, skp = usernames.apply_export_renames(c2, rows)
+assert ren == [("newest", "brandnew")] and not skp and c2.execute("SELECT COUNT(*) FROM creators WHERE handle='brandnew'").fetchone()[0] == 1
+assert rows[1]["handle"] == "brandnew", "an old name in a file is filed under the current one"
+# creator request flow
+req = usernames.new_request(c2, "111", "tiktok", "@fromcreator")
+try: usernames.new_request(c2, "111", "instagram", "other_ig"); raise SystemExit("one open request only")
+except ValueError: pass
+usernames.decide_request(c2, req["id"], True, 5)
+assert c2.execute("SELECT COUNT(*) FROM creators WHERE handle='fromcreator'").fetchone()[0] == 1
+try: usernames.decide_request(c2, req["id"], True, 5); raise SystemExit("double decision")
+except ValueError: pass
+print("usernames: OK")
+
+# --- managers
+import managers
+c3 = core.connect(":memory:"); creators.ensure_schema(c3)
+cfg = nudges.load_config()
+cfg["manager_rules"]["min_creators"] = 3
+hdr = "Data period,Creator ID,Creator's username,Creator Network manager,Join time,Diamonds,LIVE duration,Valid go LIVE days,LIVE streams\n"
+def mrow(i, mgr, days, hrs, join="2026-05-01 10:00:00 (UTC+0)", end="2026-09-30"):
+    return f"2026-09-01 ~ {end},{i},u{i},{mgr},{join},50,{hrs}h 0m 0s,{days},9\n"
+body = "".join([mrow(1, "good@x.com", 9, 25), mrow(2, "good@x.com", 8, 21), mrow(3, "good@x.com", 2, 3),     # 2 of 3 active
+                mrow(4, "bad@x.com", 9, 25), mrow(5, "bad@x.com", 1, 1), mrow(6, "bad@x.com", 0, 0), mrow(7, "bad@x.com", 2, 2),
+                mrow(8, "bad@x.com", 3, 4, join="2026-09-25 10:00:00 (UTC+0)"),                                # too new: left out
+                mrow(9, "hierarchymusicllc@gmail.com", 0, 0), mrow(10, "tiny@x.com", 0, 0)])
+rows, found = nudges.parse_stats((hdr + body).encode(), "m.csv", cfg)
+assert "manager" in found
+nudges.save_stats(c3, rows)
+rep = {g["manager"]: g for g in managers.report(c3, cfg)}
+assert rep["good@x.com"]["level"] == "ok" and round(rep["good@x.com"]["now_pct"]) == 67, rep["good@x.com"]
+assert rep["bad@x.com"]["total"] == 4 and rep["bad@x.com"]["level"] == "danger" and rep["bad@x.com"]["final"], rep["bad@x.com"]
+assert rep["hierarchymusicllc@gmail.com"]["level"] == "owner" and rep["tiny@x.com"]["level"] == "small"
+assert managers.report(c3, cfg)[0]["manager"] == "bad@x.com", "worst first"
+assert managers.record_final(c3, managers.report(c3, cfg)) == 2                       # owner and small are never recorded
+# the next month: bad again -> second month in a row
+rows, _ = nudges.parse_stats((hdr + body.replace("2026-09-01 ~ 2026-09-30", "2026-10-01 ~ 2026-10-31")).encode(), "m.csv", cfg)
+nudges.save_stats(c3, rows)
+g = {x["manager"]: x for x in managers.report(c3, cfg)}["bad@x.com"]
+assert managers.strikes(g) == 2 and "2 months in a row" in managers.line(g), managers.line(g)
+# mid-month nobody is flagged for a total they can still fix
+rows, _ = nudges.parse_stats((hdr + body.replace("2026-09-01 ~ 2026-09-30", "2026-10-01 ~ 2026-10-06")).encode(), "m.csv", cfg)
+nudges.save_stats(c3, rows)
+assert {x["manager"]: x for x in managers.report(c3, cfg)}["bad@x.com"]["level"] == "ok"
+print("managers: OK")
+
+# --- unlock quota
+import unlock
+c4 = core.connect(":memory:"); creators.ensure_schema(c4)
+cfg = nudges.load_config()
+assert unlock.rules(cfg)["min_valid_days"] == 8 and unlock.rules(cfg)["window_days"] == 30
+for h in ("newbie", "quick", "late", "oldie"):
+    c4.execute("INSERT INTO creators(handle, member_status, approved_at, discord_id, kind) VALUES (?,?,?,?,?)", (h, "member", "2026-10-01 12:00:00", h + "id", "artist"))
+c4.commit()
+assert unlock.seed_existing(c4) == 4 and unlock.is_unlocked(c4, "oldie", cfg), "current members are grandfathered"
+c4.execute("DELETE FROM creator_unlock"); c4.execute("DELETE FROM settings WHERE key='unlock:seeded'"); c4.commit()
+assert not unlock.is_unlocked(c4, "newbie", cfg)
+hdr = "Data period,Creator ID,Creator's username,Days since joining,Diamonds,LIVE duration,Valid go LIVE days,LIVE streams,Valid go LIVE days last month\n"
+rows, _ = nudges.parse_stats((hdr + "2026-10-01 ~ 2026-10-06,1,newbie,10,0,3h 0m 0s,3,3,0\n2026-10-01 ~ 2026-10-06,2,quick,5,5,12h 0m 0s,8,9,0\n"
+                              "2026-10-01 ~ 2026-10-06,3,late,47,0,1h 0m 0s,1,1,5\n2026-10-01 ~ 2026-10-06,4,oldie,147,0,0s,0,0,9\n").encode(), "u.csv", cfg)
+nudges.save_stats(c4, rows)
+res = unlock.evaluate(c4, cfg, datetime.date(2026, 10, 6))
+assert sorted(res["unlocked"]) == ["oldie", "quick"], res         # oldie via last month's 9 days
+assert [h for h, p in res["missed"]] == ["late"], res              # 47 days since joining, only 5 of 8 valid days
+assert unlock.evaluate(c4, cfg, datetime.date(2026, 10, 7)) == {"unlocked": [], "missed": []}, "each event only once"
+assert unlock.is_unlocked(c4, "quick", cfg) and not unlock.is_unlocked(c4, "newbie", cfg)
+p = unlock.progress(c4, "newbie", cfg, datetime.date(2026, 10, 6))
+assert p["days"] == 3 and p["days_in"] == 10 and p["days_left"] == 20 and not p["met"]
+p = unlock.progress(c4, "newbie", cfg, datetime.date(2026, 10, 9))          # the file is 3 days old: the clock moves on
+assert p["days_in"] == 13, p
+assert "3 of 8" in unlock.progress_text(c4, "newbie", cfg, datetime.date(2026, 10, 6)) and unlock.progress_text(c4, "quick", cfg) is None
+# day 31+ without the quota
+assert unlock.progress(c4, "newbie", cfg, datetime.date(2026, 10, 27))["window_over"] and not unlock.progress(c4, "newbie", cfg, datetime.date(2026, 10, 26))["window_over"]
+cfg2 = {**cfg, "unlock": {"enabled": False}}
+assert unlock.is_unlocked(c4, "newbie", cfg2) and unlock.progress_text(c4, "newbie", cfg2) is None
+print("unlock: OK")

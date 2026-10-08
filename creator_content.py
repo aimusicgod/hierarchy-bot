@@ -58,11 +58,66 @@ STUDIO_INTRO = ("Pick a room below, then tell us your preferred dates, session l
                 "Both studios are in the Los Angeles area. Travel and lodging are up to you; if you can't make it to LA, "
                 "you can skip this one.")
 
+FAQ_TITLE = "FAQs"
+# (question, answer). Edit freely; run /setup-server afterward and the post updates in place. Keep answers to things that are true.
+FAQS = [
+    ("I changed my TikTok or Instagram username. What do I do?",
+     "Go to #support and tap Change my TikTok username or Change my Instagram username. Type the new one and we'll update your account. "
+     "Your old username stays on file so your stats and history stay connected."),
+    ("What is the unlock quota?",
+     "New members start with a small part of the server. Once you reach the LIVE-days goal, the whole community and the academy open up "
+     "automatically. Use /progress to see how close you are. Need help? Ask in #support."),
+    ("Who can join?",
+     "Hierarchy Music is an invite-only network of vetted artists and models. Apply in #apply by choosing Apply as Artist or Apply as Model."),
+    ("Why do you need my mobile number?",
+     "To verify your account and to send account and check-in messages. Message frequency varies and message and data rates may apply. "
+     "Reply STOP at any time to stop texts. You'll still be reached by Discord, email and phone. Reply HELP for help."),
+    ("I didn't get my code.",
+     "Codes are valid for 10 minutes and you have 5 tries. Tap Send a new code if you need another (up to 3 per application), or I have a code if you closed the window. "
+     "Check that your number was entered correctly. Still stuck? Write in #support, but don't post your phone number or email there."),
+    ("How long does approval take?",
+     "If your details match what we have on file, you're approved right away. Otherwise a team member reviews your application, "
+     "and you'll get a message here on Discord when it's decided."),
+    ("Who can see my information?",
+     "Your phone number and email are kept private. They are never posted in public channels, and only the Hierarchy Music team can see them."),
+    ("What is my private check-in channel?",
+     "When you're approved you get a private channel that starts with checkin-. Only you and the Hierarchy Music team can see it. "
+     "Check-ins and replies to our texts show up there."),
+    ("How do the academy lessons and quizzes work?",
+     "Each lesson is a post in #lessons. Tap Mark complete or Take quiz. You need 70% to pass, and if you miss it you can retake the quiz after an hour. "
+     "Passing a module earns you a role and unlocks the next one. Type /progress to see where you are."),
+    ("How does studio booking work? (artists)",
+     "Pick a room in #book-studio and send your preferred dates. We contact the studio and share their reply with you. "
+     "Hierarchy Music is making an introduction only. Booking, payment and terms are between you and the studio, you are responsible for paying "
+     "the studio, and Hierarchy Music is not responsible for unpaid bills. Rates may change. You can have up to 2 open requests at a time."),
+    ("Where do I ask for help?",
+     "Members: #ask-for-help. Applicants who aren't in yet: #support. Please keep personal details out of public channels."),
+]
+
+UNLOCK_TITLE = "Unlock the full community"
+
+
+def unlock_text(r):
+    need = f"**{r['min_valid_days']} valid LIVE days**" + (f" and **{r['min_hours']} hours**" if r.get("min_hours") else "")
+    return ("Welcome! You're in. To keep the community active and focused on creators who are going LIVE, the rest of the server and "
+            f"the Hierarchy Academy open up once you reach {need}.\n\n"
+            f"You have **{r['window_days']} days** from joining. Use /progress any time to see where you are. When you reach it, "
+            "the roles are added automatically and you'll get a message.\n\n"
+            "Stuck, or something got in the way? Message us in #support and a manager will help. "
+            "Until then you can introduce yourself, share when you're going LIVE, and use your private check-in channel.")
+
+
+SUPPORT_TOPIC = "Questions about applying? Ask here. Please don't post your phone number or email."
+FAQS_TOPIC = "Answers to common questions."
+
 WEEKLY_GOALS_TOPIC = "Post your goal for the week here. Your private check-in channel is separate."
 
 TOPICS = {
     "welcome": "Start here.",
     "apply": "Apply as an Artist or Model.",
+    "faqs": FAQS_TOPIC,
+    "support": SUPPORT_TOPIC,
+    "unlock-quota": "How to unlock the full community and the academy.",
     "announcements": "News from the Hierarchy Music team.",
     "rules": "Server rules.",
     "introductions": "Say hello.",
@@ -87,12 +142,19 @@ TOPICS = {
 }
 
 
-def welcome_dm(first, kind):
+def welcome_dm(first, kind, quota=None):
+    """quota: the unlock rules dict when new members must earn the rest of the server, else None."""
+    if quota:
+        goal = f"{quota['min_valid_days']} valid LIVE days" + (f" and {quota['min_hours']} hours" if quota.get("min_hours") else "")
+        third = (f"3. Go LIVE! Reach {goal} within {quota['window_days']} days and the whole community and the academy unlock "
+                 "automatically. Use /progress to check.\n\n")
+    else:
+        third = "3. Start the academy in #academy-start\n\n"
     return (f"Welcome to Hierarchy Music, {first}! You're in as an **{kind.capitalize()}**. 🎉\n\n"
             "Here's what to do next:\n"
             "1. Say hello in #introductions\n"
             "2. Post your weekly goal in #weekly-goals\n"
-            "3. Start the academy in #academy-start\n\n"
+            + third +
             "You also have a private check-in channel just for you and the team.")
 
 

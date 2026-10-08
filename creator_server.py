@@ -19,6 +19,8 @@ import cs_academy
 import cs_nudges
 import cs_setup
 import cs_studio
+import cs_usernames
+import cs_unlock
 
 # re-exported for bot.py
 on_member_join = cs_apply.on_member_join
@@ -68,11 +70,16 @@ async def post_studio_panel(channel):
     return await _post_panel(channel, "studio", cs_studio.panel_embed(), cs_studio.StudioPanelView())
 
 
+async def post_username_panel(channel):
+    return await _post_panel(channel, "username", cs_usernames.panel_embed(), cs_usernames.UsernamePanelView())
+
+
 def register(bot):
     """Called once from bot.setup_hook. Registers the buttons, panels and commands."""
-    bot.add_dynamic_items(cs_apply.CAppButton, cs_academy.LessonButton, cs_studio.StudioButton, cs_nudges.NudgeButton)
+    bot.add_dynamic_items(cs_apply.CAppButton, cs_academy.LessonButton, cs_studio.StudioButton, cs_nudges.NudgeButton, cs_nudges.NudgeAllButton, cs_usernames.RequestButton)
     bot.add_view(cs_apply.ApplyPanelView())
     bot.add_view(cs_studio.StudioPanelView())
+    bot.add_view(cs_usernames.UsernamePanelView())
     # ----- staff server commands (admin) -----
     @bot.tree.command(name="nudgeskip", description="Pause check-ins for a creator (on a break)")
     @app_commands.default_permissions(administrator=True)
@@ -85,6 +92,29 @@ def register(bot):
         nudges.skip(conn, handle, until, note)
         conn.close()
         await ctx.say(interaction, f"Check-ins paused for @{core.norm_handle(handle)}" + (f" until {until}." if until else " until you unpause."))
+
+    @bot.tree.command(name="manager-report", description="How each manager's creators are doing against the monthly minimums")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def manager_report(interaction: discord.Interaction):
+        import managers
+        cfg = nudges.load_config()
+        conn = ctx.db()
+        try:
+            entries = managers.report(conn, cfg)
+            r = managers.rules(cfg)
+        finally:
+            conn.close()
+        if not entries:
+            return await ctx.say(interaction, "No manager data yet. Upload the TikTok Live stats file first (it needs the \"Creator Network manager\" column).")
+        e = discord.Embed(title="Manager report", color=ctx.gold,
+                          description=f"Share of each manager's creators who reached the monthly minimum (valid days and hours). "
+                                      f"Watch below {r['warn_pct']}%, danger below {r['fire_pct']}%. "
+                                      f"Creators who joined under {r['min_tenure_days']} days ago and managers with under {r['min_creators']} creators are not judged.")
+        e.add_field(name="Managers", value="\n".join(managers.line(g) for g in entries[:15])[:1000], inline=False)
+        e.set_footer(text="A report only. Nothing happens to anyone automatically.")
+        await ctx.say(interaction, embed=e)
 
     @bot.tree.command(name="nudgeunskip", description="Resume check-ins for a creator")
     @app_commands.default_permissions(administrator=True)
@@ -109,8 +139,11 @@ def register(bot):
         await ctx.say(interaction, f"Weekly goal for @{core.norm_handle(handle)} set to {hours:g} hours.")
 
     if not ctx.guild_id:
+        cs_usernames.register(bot, None)
         return
     gobj = discord.Object(id=int(ctx.guild_id))
+    cs_usernames.register(bot, gobj)
+    cs_unlock.register(bot, gobj)
 
     # ----- creators server commands -----
     @bot.tree.command(name="setup-server", description="Build or update the roles, channels and permissions of this server", guild=gobj)
@@ -119,11 +152,11 @@ def register(bot):
     async def setup_server(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            notes = await cs_setup.build_server(interaction.guild, post_apply_panel, post_studio_panel)
+            notes = await cs_setup.build_server(interaction.guild, post_apply_panel, post_studio_panel, post_username_panel)
         except discord.Forbidden:
             return await ctx.say(interaction, "I don't have permission to do that. Give the bot's role **Administrator** in this "
                                               "server (or Manage Roles, Manage Channels and Manage Webhooks) and try again.")
-        msg = "Done. Roles, channels and permissions are set up, and the welcome, rules, academy, apply and studio panels are posted."
+        msg = "Done. Roles, channels and permissions are set up, and the welcome, rules, academy, apply, studio and username panels are posted."
         msg += "\n\n**Next:** give yourself the **Admin** role (and managers the **Manager** role), and drag the bot's role to the top of " \
                "Server Settings → Roles so it can manage the roles below it."
         if notes:
@@ -188,10 +221,44 @@ async def _safe(label, coro):
         print(f"[creators] {label} failed: {e}")
 
 
+async def _nightly_backup(now):
+    """Once a night (after 3am), post a copy of the whole database to the private channel in BACKUP_CHANNEL_ID.
+    Keeps the newest 14; older ones are deleted so personal details don't pile up in Discord."""
+    cid = os.getenv("BACKUP_CHANNEL_ID")
+    if not cid or now.hour < 3:
+        return
+    today = now.date().isoformat()
+    conn = ctx.db()
+    try:
+        if core.get_setting(conn, "backup:last") == today:
+            return
+        import tempfile
+        name = f"hierarchy-backup-{today}.db"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, name)
+            core.backup_to(conn, path)
+            ch = ctx.bot.get_channel(int(cid)) or await ctx.bot.fetch_channel(int(cid))
+            if os.path.getsize(path) > 24 * 1024 * 1024:
+                await ch.send("⚠️ The database is now too big to back up through Discord. Time to move backups elsewhere.")
+            else:
+                await ch.send(f"Nightly backup for {today}. Private: it contains creator contact details.", file=discord.File(path, filename=name))
+        core.set_setting(conn, "backup:last", today)
+    finally:
+        conn.close()
+    old = [m async for m in ch.history(limit=100) if m.author.id == ctx.bot.user.id and m.attachments
+           and m.attachments[0].filename.startswith("hierarchy-backup-")]
+    for m in old[14:]:
+        try:
+            await m.delete()
+        except discord.HTTPException:
+            pass
+
+
 async def _tick():
+    now = datetime.datetime.now(ctx.org_tz)
+    await _safe("nightly backup", _nightly_backup(now))
     if not ctx.guild_id:
         return
-    now = datetime.datetime.now(ctx.org_tz)
     today, week = now.date().isoformat(), nudges.iso_week(now.date())
     try:
         cfg = nudges.load_config()
@@ -214,6 +281,7 @@ async def _tick():
             await _safe("weekly report", cs_nudges.post_weekly_report())
     if now.weekday() == 0 and now.hour >= 9 and last_prompt != week:
         await _safe("weekly prompt", _post_weekly_prompt(week))
+    await _safe("unlock check", cs_unlock.daily_check())
     await _safe("studio replies", cs_studio.poll_replies())
     await _safe("studio follow-ups", cs_studio.send_followups())
 

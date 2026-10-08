@@ -21,6 +21,8 @@ ctx = _Ctx()
 
 ROLE_PENDING, ROLE_MEMBER, ROLE_ARTIST, ROLE_MODEL = "Pending", "Member", "Artist", "Model"
 ROLE_ADMIN, ROLE_MANAGER = "Admin", "Manager"
+ROLE_UNLOCKED = "Unlocked"
+ROLE_ARTIST_TRACK, ROLE_MODEL_TRACK = "Artist Track", "Model Track"   # plain access roles, given at unlock; Artist / Model are the visible labels
 
 
 def init(**kw):

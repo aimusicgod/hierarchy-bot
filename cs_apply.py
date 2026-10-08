@@ -10,8 +10,10 @@ import core
 import creators
 import creator_content as T
 import messaging
+import nudges
+import unlock
 from cs_ctx import (ctx, creators_guild, get_role, get_channel, admin_check, staff_channel,
-                    ROLE_PENDING, ROLE_MEMBER, ROLE_ARTIST, ROLE_MODEL, ROLE_ADMIN, ROLE_MANAGER)
+                    ROLE_PENDING, ROLE_MEMBER, ROLE_ARTIST, ROLE_MODEL, ROLE_ADMIN, ROLE_MANAGER, ROLE_UNLOCKED, ROLE_ARTIST_TRACK, ROLE_MODEL_TRACK)
 
 USERS_OK = discord.AllowedMentions(users=True, roles=False, everyone=False)
 ROLE_HINT = ("I couldn't change their roles. In the creators server, open Server Settings → Roles and drag the bot's role "
@@ -319,9 +321,19 @@ def _staff_roles(guild):
 
 
 async def _grant_roles(guild, member, kind, warnings):
-    add = [r for r in (get_role(guild, ROLE_MEMBER), get_role(guild, ROLE_ARTIST if kind == "artist" else ROLE_MODEL)) if r]
-    if len(add) < 2:
-        warnings.append("The Member / Artist / Model roles don't exist yet. Run /setup-server in the creators server.")
+    """Everyone approved gets Member. Unlocked (plus Artist or Model) only comes with the unlock quota."""
+    conn = ctx.db()
+    try:
+        c = creators.creator_by_discord(conn, member.id)
+        opened = c is not None and unlock.is_unlocked(conn, c["handle"], nudges.load_config())
+    finally:
+        conn.close()
+    mine = ROLE_ARTIST if kind == "artist" else ROLE_MODEL                      # the label they signed up for, from day one
+    track = ROLE_ARTIST_TRACK if kind == "artist" else ROLE_MODEL_TRACK         # what opens the Artist / Model channels
+    want = [ROLE_MEMBER, mine] + ([ROLE_UNLOCKED, track] if opened else [])
+    add = [r for r in (get_role(guild, n) for n in want) if r]
+    if len(add) < len(want):
+        warnings.append("The Member / Artist / Model / Unlocked roles don't exist yet. Run /setup-server in the creators server.")
     try:
         pending = get_role(guild, ROLE_PENDING)
         if pending and pending in member.roles:
@@ -392,7 +404,8 @@ async def approve_application(app_id, by):
         ch = await ensure_checkin_channel(guild, creator, member, warnings)
         creator = conn.execute("SELECT * FROM creators WHERE handle=?", (info["handle"],)).fetchone()
         first = creators.first_name(app["full_name"])
-        hello = T.welcome_dm(first, app["kind"])
+        qr = unlock.rules(nudges.load_config())
+        hello = T.welcome_dm(first, app["kind"], qr if qr["enabled"] else None)
         if not await send_to_creator_discord(creator, hello):
             warnings.append("I couldn't DM them; the welcome is in their private channel.")
         if ch:
@@ -441,7 +454,7 @@ async def revoke_access(handle):
             return
         try:
             member = await guild.fetch_member(int(c["discord_id"]))
-            roles = [r for r in (get_role(guild, n) for n in (ROLE_MEMBER, ROLE_ARTIST, ROLE_MODEL)) if r and r in member.roles]
+            roles = [r for r in (get_role(guild, n) for n in (ROLE_MEMBER, ROLE_UNLOCKED, ROLE_ARTIST, ROLE_MODEL, ROLE_ARTIST_TRACK, ROLE_MODEL_TRACK)) if r and r in member.roles]
             if roles:
                 await member.remove_roles(*roles, reason="Terminated in TikTok")
             if c["checkin_channel_id"]:

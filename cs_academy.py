@@ -193,6 +193,15 @@ def progress_embed(conn, user_id):
         e.add_field(name=f"Module {m['module']}: {status}", value="\n".join(lines)[:1000], inline=False)
     if not lessons:
         e.description = "No lessons have been published yet."
+    try:
+        import nudges, unlock
+        cfg = nudges.load_config()
+        cr = creators.creator_by_discord(conn, user_id)
+        line = unlock.progress_text(conn, cr["handle"], cfg) if cr else None
+        if line:
+            e.insert_field_at(0, name="🔒 Unlock the full community", value=line, inline=False)
+    except Exception:
+        pass
     return e
 
 

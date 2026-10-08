@@ -5,22 +5,24 @@ import discord
 import academy
 import creator_content as T
 from cs_ctx import (ctx, get_role, ensure_role, get_channel, remember_channel,
-                    ROLE_PENDING, ROLE_MEMBER, ROLE_ARTIST, ROLE_MODEL, ROLE_ADMIN, ROLE_MANAGER)
+                    ROLE_PENDING, ROLE_MEMBER, ROLE_ARTIST, ROLE_MODEL, ROLE_ADMIN, ROLE_MANAGER, ROLE_UNLOCKED, ROLE_ARTIST_TRACK, ROLE_MODEL_TRACK)
 
 PO = discord.PermissionOverwrite
 
 # (category, [(channel name, type, who can see it, read-only?, slowmode seconds)])
 # who: everyone | member | artist | model.   type: text | voice | stage | forum
 LAYOUT = [
-    ("START HERE", [("welcome", "text", "everyone", True, 0), ("apply", "text", "everyone", True, 0)]),
+    ("START HERE", [("welcome", "text", "everyone", True, 0), ("apply", "text", "everyone", True, 0),
+                   ("faqs", "text", "everyone", True, 0), ("support", "text", "everyone", False, 30)]),
     ("HIERARCHY", [("announcements", "text", "member", True, 0), ("rules", "text", "member", True, 0),
-                   ("introductions", "text", "member", False, 10), ("creator-lounge", "text", "member", False, 5),
-                   ("wins", "text", "member", False, 5), ("go-live-schedule", "text", "member", False, 10),
-                   ("collab-board", "text", "member", False, 10), ("opportunities", "text", "member", True, 0),
-                   ("Lounge", "voice", "member", False, 0)]),
-    ("ACADEMY", [("academy-start", "text", "member", True, 0), ("lessons", "forum", "member", True, 0),
-                 ("module-discussion", "text", "member", False, 5), ("resources", "text", "member", True, 0),
-                 ("ask-for-help", "text", "member", False, 5), ("office-hours", "stage", "member", False, 0)]),
+                   ("unlock-quota", "text", "member", True, 0),
+                   ("introductions", "text", "member", False, 10), ("go-live-schedule", "text", "member", False, 10),
+                   ("creator-lounge", "text", "unlocked", False, 5), ("wins", "text", "unlocked", False, 5),
+                   ("collab-board", "text", "unlocked", False, 10), ("opportunities", "text", "unlocked", True, 0),
+                   ("Lounge", "voice", "unlocked", False, 0)]),
+    ("ACADEMY", [("academy-start", "text", "unlocked", True, 0), ("lessons", "forum", "unlocked", True, 0),
+                 ("module-discussion", "text", "unlocked", False, 5), ("resources", "text", "unlocked", True, 0),
+                 ("ask-for-help", "text", "unlocked", False, 5), ("office-hours", "stage", "unlocked", False, 0)]),
     ("CRAFT TRACKS", [("artist-lounge", "text", "artist", False, 5), ("song-feedback", "text", "artist", False, 10),
                       ("release-plans", "text", "artist", False, 10), ("book-studio", "text", "artist", True, 0),
                       ("model-lounge", "text", "model", False, 5), ("shoot-feedback", "text", "model", False, 10),
@@ -32,11 +34,11 @@ LAYOUT = [
 def _who_roles(guild, who):
     if who == "everyone":
         return [guild.default_role]
-    name = {"member": ROLE_MEMBER, "artist": ROLE_ARTIST, "model": ROLE_MODEL}[who]
+    name = {"member": ROLE_MEMBER, "unlocked": ROLE_UNLOCKED, "artist": ROLE_ARTIST_TRACK, "model": ROLE_MODEL_TRACK}[who]
     return [get_role(guild, name)]
 
 
-CATEGORY_WHO = {"START HERE": ["everyone"], "HIERARCHY": ["member"], "ACADEMY": ["member"],
+CATEGORY_WHO = {"START HERE": ["everyone"], "HIERARCHY": ["member"], "ACADEMY": ["unlocked"],
                 "CRAFT TRACKS": ["artist", "model"], "CHECK-INS": ["member"]}
 
 
@@ -155,13 +157,16 @@ async def _automod(guild, notes):
         notes.append(f"I couldn't turn on AutoMod ({e}). You can add it in Server Settings → AutoMod.")
 
 
-async def build_server(guild, post_apply, post_studio):
+async def build_server(guild, post_apply, post_studio, post_username=None):
     """Create or update everything. Returns a list of notes for the admin."""
     notes = []
     await ensure_role(guild, ROLE_PENDING, colour=discord.Colour.light_grey())
     await ensure_role(guild, ROLE_MEMBER, colour=discord.Colour(ctx.gold), hoist=True)
-    await ensure_role(guild, ROLE_ARTIST, colour=discord.Colour.purple())
-    await ensure_role(guild, ROLE_MODEL, colour=discord.Colour.magenta())
+    await ensure_role(guild, ROLE_UNLOCKED, colour=discord.Colour.green())
+    await ensure_role(guild, ROLE_ARTIST_TRACK)
+    await ensure_role(guild, ROLE_MODEL_TRACK)
+    await ensure_role(guild, ROLE_ARTIST, colour=discord.Colour.purple(), hoist=True)
+    await ensure_role(guild, ROLE_MODEL, colour=discord.Colour.magenta(), hoist=True)
     await ensure_role(guild, ROLE_ADMIN, colour=discord.Colour.red(), hoist=True)
     await ensure_role(guild, ROLE_MANAGER, colour=discord.Colour.blue())
     mods = sorted(academy.by_module(academy.load_lessons()))
@@ -183,7 +188,19 @@ async def build_server(guild, post_apply, post_studio):
     await _post(guild, "welcome", "welcome", discord.Embed(title=T.WELCOME_TITLE, description=T.WELCOME_TEXT, color=ctx.gold))
     await _post(guild, "rules", "rules", discord.Embed(title=T.RULES_TITLE, description=T.RULES_TEXT, color=ctx.gold))
     await _post(guild, "academy-start", "academy", discord.Embed(title=T.ACADEMY_TITLE, description=T.ACADEMY_TEXT, color=ctx.gold))
+    import nudges, unlock
+    ur = unlock.rules(nudges.load_config())
+    if ur["enabled"]:
+        await _post(guild, "unlock-quota", "unlock", discord.Embed(title=T.UNLOCK_TITLE, description=T.unlock_text(ur), color=ctx.gold))
+    faq = discord.Embed(title=T.FAQ_TITLE, color=ctx.gold)
+    for q, a in T.FAQS:
+        faq.add_field(name=q[:256], value=a[:1024], inline=False)
+    await _post(guild, "faqs", "faqs", faq)
     await post_apply(get_channel(guild, "apply"))
     await post_studio(get_channel(guild, "book-studio"))
+    if post_username is not None:
+        await post_username(get_channel(guild, "support"))
     await _automod(guild, notes)
+    import cs_unlock
+    await cs_unlock.sync_roles(guild, notes)
     return notes

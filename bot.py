@@ -336,6 +336,10 @@ class Bot(discord.Client):
             print(f"[creators] on_member_join failed: {e}")
 
     async def on_ready(self):
+        print("[startup] bot is in these servers: " + ", ".join(f"{g.name} ({g.id})" for g in self.guilds), flush=True)
+        for label, gid in (("GUILD_ID (scouts/staff)", GUILD_ID), ("CREATOR_GUILD_ID (creators)", CREATOR_GUILD_ID)):
+            if gid and not any(str(g.id) == str(gid) for g in self.guilds):
+                print(f"[startup] WARNING: {label} = {gid}, but the bot is NOT in a server with that ID.", flush=True)
         if not getattr(self, "_posts_done", False):
             self._posts_done = True
             await ensure_posts()
@@ -349,21 +353,21 @@ class Bot(discord.Client):
                             org_tz=ORG_TZ, guild_id=CREATOR_GUILD_ID, staff_guild_id=GUILD_ID,
                             nudge_channel_id=os.getenv("NUDGE_CHANNEL_ID"), gold=GOLD, no_pings=NO_PINGS, max_upload=MAX_UPLOAD)
         creator_server.register(self)
-        print(f"[startup] Hierarchy bot with creators server loaded (creators server {'ON' if CREATOR_GUILD_ID else 'OFF'})")
+        print(f"[startup] Hierarchy bot with creators server loaded (creators server {'ON' if CREATOR_GUILD_ID else 'OFF'})", flush=True)
         if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
-            print(f"[startup] staff server {GUILD_ID}: registered {len(synced)} commands")
+            print(f"[startup] staff server {GUILD_ID}: registered {len(synced)} commands", flush=True)
         else:
             await self.tree.sync()
         if CREATOR_GUILD_ID:
             try:
                 synced = await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
-                print(f"[startup] creators server {CREATOR_GUILD_ID}: registered {sorted(c.name for c in synced)}")
+                print(f"[startup] creators server {CREATOR_GUILD_ID}: registered {sorted(c.name for c in synced)}", flush=True)
             except (discord.Forbidden, discord.HTTPException, ValueError) as e:
                 print(f"[creators] Couldn't register the creators-server commands ({e}). Is the bot invited to that server "
-                      "(with the 'applications.commands' scope) and is CREATOR_GUILD_ID the right server ID?")
+                      "(with the 'applications.commands' scope) and is CREATOR_GUILD_ID the right server ID?", flush=True)
         creator_server.start_loops(self)
         if HMAC_KEYS or CALENDLY_KEY or CALCOM_SECRET or INTAKE_SECRET or creator_server.needs_web_server():  # webhooks arrive here from DocuSign / your scheduler
             app = web.Application()

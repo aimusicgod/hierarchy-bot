@@ -97,11 +97,54 @@ CREATE TABLE IF NOT EXISTS studio_requests (
     created_at   TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS seen_mail (message_id TEXT PRIMARY KEY, at TEXT);
+
+-- every username change, on any platform, so old names still lead to the right person
+CREATE TABLE IF NOT EXISTS handle_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform       TEXT NOT NULL,                       -- tiktok | instagram
+    old_name       TEXT NOT NULL,
+    new_name       TEXT NOT NULL,
+    creator_handle TEXT NOT NULL,                       -- their TikTok username after the change
+    changed_at     TEXT NOT NULL,
+    changed_by     TEXT,                                -- Discord id of staff, 'creator', or 'export'
+    source         TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_hist_new ON handle_history(platform, new_name);
+CREATE INDEX IF NOT EXISTS ix_hist_old ON handle_history(platform, old_name);
+-- TikTok's Creator ID never changes, so a new username on the same ID is a rename, not a new person
+CREATE TABLE IF NOT EXISTS creator_ids (creator_id TEXT PRIMARY KEY, handle TEXT NOT NULL, first_seen TEXT, last_seen TEXT);
+-- each manager's active percentage for a finished month, so repeat misses can be seen
+CREATE TABLE IF NOT EXISTS manager_results (
+    manager TEXT NOT NULL, month TEXT NOT NULL, total INTEGER, active INTEGER, pct REAL, level TEXT,
+    PRIMARY KEY (manager, month)
+);
+-- who has passed the unlock quota (valid LIVE days) and so sees the whole community and academy
+CREATE TABLE IF NOT EXISTS creator_unlock (
+    handle TEXT PRIMARY KEY, unlocked_at TEXT, unlocked_by TEXT, missed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS username_requests (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_id  TEXT NOT NULL,
+    platform    TEXT NOT NULL,
+    old_name    TEXT NOT NULL,
+    new_name    TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',       -- pending | approved | denied
+    decided_by  TEXT,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
+
+
+_LIVE_STATS_EXTRA = {"diamonds": "REAL", "live_hours": "REAL", "valid_days": "REAL", "streams": "REAL", "period_start": "TEXT",
+                     "period_end": "TEXT", "diamonds_prev": "REAL", "hours_prev": "REAL", "days_prev": "REAL", "join_date": "TEXT", "manager": "TEXT", "days_since_join": "REAL"}
 
 
 def ensure_schema(conn):
     conn.executescript(SCHEMA)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(live_stats)")}
+    for col, typ in _LIVE_STATS_EXTRA.items():          # older databases get the new month-to-date columns added in place
+        if col not in have:
+            conn.execute(f"ALTER TABLE live_stats ADD COLUMN {col} {typ}")
     conn.commit()
     return conn
 
