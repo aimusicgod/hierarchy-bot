@@ -66,6 +66,13 @@ async def act_upload_stats(interaction, att):
                     "\nMonthly alerts need these columns.", inline=False)
     if act:
         e.add_field(name="Active creators", value=_active_line(act), inline=False)
+    conn = ctx.db()
+    try:
+        unl = managers.unlinked(conn)
+    finally:
+        conn.close()
+    if unl:
+        e.add_field(name="Managers not linked to Discord yet", value="\n".join(unl)[:900] + "\nUse /assign-manager so their alerts reach them.", inline=False)
     if renamed:
         e.add_field(name=f"Username changes found ({len(renamed)})", value="\n".join(f"@{o} is now @{n_}" for o, n_ in renamed)[:1000]
                     + "\nTheir records and history were moved to the new name.", inline=False)
@@ -97,6 +104,11 @@ def escalation_embed(n, creator, status=None):
         e.add_field(name="Email", value=creator["email"] or "—")
         if creator["discord_id"]:
             e.add_field(name="Discord", value=f"<@{creator['discord_id']}>")
+    conn = ctx.db()
+    try:
+        e.add_field(name="Their manager", value=managers.label(managers.assignment(conn, n["handle"])), inline=False)
+    finally:
+        conn.close()
     if status:
         e.add_field(name="Result", value=status, inline=False)
     e.set_footer(text=f"Alert #{n['id']}  |  Nothing is sent to the creator. Tap Contacted once a manager has reached them")
@@ -156,6 +168,9 @@ class NudgeButton(ui.DynamicItem[ui.Button], template=r"nudge:(?P<id>\d+):(?P<ac
                 nudges.mark_nudge(conn, self.nid, "skipped", decided_by=str(interaction.user.id))
                 result = f"Skipped by <@{interaction.user.id}>"
             elif self.act == "done":
+                owner = managers.assignment(conn, n["handle"])["discord_id"]
+                if owner and str(interaction.user.id) != owner and not admin_check(interaction):
+                    return await ctx.say(interaction, f"This one belongs to <@{owner}>. Only they or an admin can mark it done.")
                 nudges.mark_nudge(conn, self.nid, "sent", channel="manager", decided_by=str(interaction.user.id))
                 result = f"Manager contact logged by <@{interaction.user.id}>"
             else:
@@ -248,8 +263,11 @@ async def run_nudges(force=False):
                 nudges.mark_nudge(conn, n["id"], "sent", channel=used, decided_by="auto")
                 await ch.send(f"Auto-sent a check-in to @{n['handle']} via {used}.", allowed_mentions=ctx.no_pings)
             else:
-                msg = await (alerts if esc else ch).send(embed=nudge_embed(n, c, n["rule_id"]), view=nudge_view(n["id"], escalation=esc),
-                                                         allowed_mentions=ctx.no_pings)
+                owner = managers.assignment(conn, n["handle"])["discord_id"] if esc else None
+                msg = await (alerts if esc else ch).send(
+                    content=f"<@{owner}> a creator needs your follow-up." if owner else None,
+                    embed=nudge_embed(n, c, n["rule_id"]), view=nudge_view(n["id"], escalation=esc),
+                    allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=int(owner))]) if owner else ctx.no_pings)
                 conn.execute("UPDATE nudges SET review_msg_id=? WHERE id=?", (str(msg.id), n["id"]))
                 conn.commit()
         core.set_setting(conn, "nudge:last_run", today.isoformat())

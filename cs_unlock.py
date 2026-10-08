@@ -6,6 +6,7 @@ from discord import app_commands
 
 import core
 import creators
+import managers
 import nudges
 import unlock
 from cs_apply import contact_creator
@@ -56,9 +57,19 @@ async def run_checks():
             print(f"[creators] unlock notice failed for {h}: {ex}", flush=True)
     if missed:
         ch = await staff_channel("alerts")
-        lines = [f"@{c['handle']}: {int(p['days'])} of {p['need_days']} valid LIVE days after {unlock.rules(cfg)['window_days']}+ days" for c, p in missed]
-        await ch.send("⏰ **Unlock quota missed** (still locked out of the full community). A manager should reach out, "
-                      "or use /unlock-creator to open it up for them:\n" + "\n".join(lines)[:1800], allowed_mentions=ctx.no_pings)
+        lines, ping = [], []
+        conn = ctx.db()
+        try:
+            for c, p in missed:
+                a = managers.assignment(conn, c["handle"])
+                if a["discord_id"]:
+                    ping.append(discord.Object(id=int(a["discord_id"])))
+                lines.append(f"@{c['handle']}: {int(p['days'])} of {p['need_days']} valid LIVE days. Manager: {managers.label(a)}")
+        finally:
+            conn.close()
+        await ch.send("⏰ **Unlock quota missed** (still locked out of the full community). The manager listed should reach out, "
+                      "or use /unlock-creator to open it up for them:\n" + "\n".join(lines)[:1800],
+                      allowed_mentions=discord.AllowedMentions(users=ping) if ping else ctx.no_pings)
     return {"unlocked": len(rows), "roles": done, "missed": len(missed)}
 
 

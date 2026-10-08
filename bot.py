@@ -23,8 +23,9 @@ from zoneinfo import ZoneInfo
 
 load_dotenv()
 TOKEN = os.environ["DISCORD_TOKEN"]
-REVIEW_CHANNEL_ID = int(os.environ["REVIEW_CHANNEL_ID"])  # private admin-only channel
+REVIEW_CHANNEL_ID = int(os.getenv("REVIEW_CHANNEL_ID") or 0)  # private admin-only channel (used until /setup-hq moves it to the HQ server)
 GUILD_ID = os.getenv("GUILD_ID")
+HQ_GUILD_ID = os.getenv("HQ_GUILD_ID")                    # the separate admin/HQ server (optional)
 DB_PATH = os.getenv("DB_PATH", "hierarchy.db")
 POWERFORM_URL = os.getenv("DOCUSIGN_POWERFORM_URL", "")   # your DocuSign PowerForm link
 HMAC_KEYS = [k.strip() for k in os.getenv("DOCUSIGN_HMAC_KEY", "").split(",") if k.strip()]
@@ -66,8 +67,48 @@ def label(conn, payee_id) -> str:
     return f"<@{payee_id}>" if str(payee_id).isdigit() else (core.payee_name(conn, payee_id) or str(payee_id))
 
 
+def _saved(key):
+    conn = db()
+    try:
+        return core.get_setting(conn, key)
+    finally:
+        conn.close()
+
+
+def hq_channel_id(kind):
+    """Channel ids that /setup-hq created in the HQ server (kind: 'review' or 'panel'), or None."""
+    v = _saved(f"hq:{kind}")
+    return int(v) if v and str(v).isdigit() else None
+
+
 async def review_channel():
-    return bot.get_channel(REVIEW_CHANNEL_ID) or await bot.fetch_channel(REVIEW_CHANNEL_ID)
+    """Where review cards (scout applications, prospects) go: the HQ server's #review once /setup-hq has run,
+    otherwise the original REVIEW_CHANNEL_ID."""
+    cid = hq_channel_id("review") or REVIEW_CHANNEL_ID
+    if not cid:
+        raise RuntimeError("No review channel yet. Run /setup-hq in your HQ server (or set REVIEW_CHANNEL_ID).")
+    return bot.get_channel(cid) or await bot.fetch_channel(cid)
+
+
+async def scouts_guild():
+    """The scouts/staff server, wherever the admin clicked from (roles and member names live there)."""
+    if not GUILD_ID:
+        return None
+    try:
+        return bot.get_guild(int(GUILD_ID)) or await bot.fetch_guild(int(GUILD_ID))
+    except (discord.HTTPException, ValueError):
+        return None
+
+
+async def scout_member(discord_id, interaction=None):
+    """Find a scout in the scouts server (not in the server the admin happens to be in)."""
+    g = await scouts_guild() or (interaction.guild if interaction else None)
+    if g is None:
+        return None
+    try:
+        return g.get_member(int(discord_id)) or await g.fetch_member(int(discord_id))
+    except (discord.HTTPException, ValueError):
+        return None
 
 
 
@@ -84,7 +125,13 @@ def submission_embed(sub) -> discord.Embed:
     e = discord.Embed(title=f"@{sub['ig_username']}", url=sub["ig_url"], color=GOLD)
     e.add_field(name="Decision", value=core.DECISIONS[sub["decision"]])
     e.add_field(name="TikTok status", value=core.STATUS_LABELS[sub["status"]])
-    e.add_field(name="Scout", value=f"<@{sub['scout_id']}>")
+    try:
+        _c = db()
+        _s = core.get_scout(_c, sub["scout_id"])
+        _c.close()
+    except Exception:
+        _s = None
+    e.add_field(name="Scout", value=(f"{_s['full_name']} " if _s and _s["full_name"] else "") + f"<@{sub['scout_id']}>")
     e.set_footer(text=f"Submission #{sub['id']}  |  {sub['created_at']} UTC")
     return e
 
@@ -275,7 +322,10 @@ async def ensure_posts():
         await sync_post(f"faq{i}", FAQ_CHANNEL_ID, e)
     await sync_help()
     await sync_scout_channel()
-    await sync_post("admin", REVIEW_CHANNEL_ID, admin_panel_embed(), AdminPanel())
+    if hq_channel_id("panel"):
+        await sync_post("admin_hq", hq_channel_id("panel"), admin_panel_embed(), AdminPanel())   # the panel now lives in the HQ server
+    else:
+        await sync_post("admin", REVIEW_CHANNEL_ID, admin_panel_embed(), AdminPanel())
 
 
 async def sync_scout_channel():
@@ -338,7 +388,8 @@ class Bot(discord.Client):
 
     async def on_ready(self):
         print("[startup] bot is in these servers: " + ", ".join(f"{g.name} ({g.id})" for g in self.guilds), flush=True)
-        for label, gid in (("GUILD_ID (scouts/staff)", GUILD_ID), ("CREATOR_GUILD_ID (creators)", CREATOR_GUILD_ID)):
+        for label, gid in (("GUILD_ID (scouts/staff)", GUILD_ID), ("CREATOR_GUILD_ID (creators)", CREATOR_GUILD_ID),
+                           ("HQ_GUILD_ID (admin HQ)", HQ_GUILD_ID)):
             if gid and not any(str(g.id) == str(gid) for g in self.guilds):
                 print(f"[startup] WARNING: {label} = {gid}, but the bot is NOT in a server with that ID.", flush=True)
         if not getattr(self, "_posts_done", False):
@@ -362,6 +413,15 @@ class Bot(discord.Client):
             print(f"[startup] staff server {GUILD_ID}: registered {len(synced)} commands", flush=True)
         else:
             await self.tree.sync()
+        if HQ_GUILD_ID:
+            try:
+                hq = discord.Object(id=int(HQ_GUILD_ID))
+                self.tree.copy_global_to(guild=hq)
+                synced = await self.tree.sync(guild=hq)
+                print(f"[startup] HQ server {HQ_GUILD_ID}: registered {len(synced)} commands", flush=True)
+            except (discord.Forbidden, discord.HTTPException, ValueError) as e:
+                print(f"[hq] Couldn't register the HQ-server commands ({e}). Is the bot invited to that server "
+                      "(with the 'applications.commands' scope) and is HQ_GUILD_ID the right server ID?", flush=True)
         if CREATOR_GUILD_ID:
             try:
                 synced = await self.tree.sync(guild=discord.Object(id=int(CREATOR_GUILD_ID)))
@@ -602,13 +662,14 @@ class ScoutDecisionButton(discord.ui.DynamicItem[discord.ui.Button],
         await interaction.response.edit_message(embed=scout_embed(s), view=scout_view(self.discord_id, self.decision))
         granted = False
         if self.decision == "approved":
-            if SCOUT_ROLE_ID and interaction.guild:
-                try:
-                    member = await interaction.guild.fetch_member(int(self.discord_id))
-                    await member.add_roles(discord.Object(id=int(SCOUT_ROLE_ID)))
-                    granted = True
-                except (discord.HTTPException, ValueError):
-                    pass
+            if SCOUT_ROLE_ID:
+                member = await scout_member(self.discord_id, interaction)   # the scouts server, even when clicked from HQ
+                if member is not None:
+                    try:
+                        await member.add_roles(discord.Object(id=int(SCOUT_ROLE_ID)))
+                        granted = True
+                    except (discord.HTTPException, ValueError):
+                        pass
             await dm_scout(self.discord_id, "You're approved as a Hierarchy scout! Head to the scout channel and tap "
                                             "**Submit a prospect** to get started. We'll email you a W-9 to sign.")
             await interaction.followup.send(
@@ -894,7 +955,7 @@ async def act_payouts(interaction, month=None):
     people, lines = [], []
     for d in due:
         pid = d["payee_id"]
-        member = interaction.guild.get_member(int(pid)) if interaction.guild and pid.isdigit() else None
+        member = await scout_member(pid, interaction) if pid.isdigit() else None
         ok = core.has_w9(conn, pid)
         people.append((pid, member.display_name if member else (core.payee_name(conn, pid) or pid), ok))
         lines.append(f"{label(conn, pid)}: **{core.money(d['cents'])}**{'' if ok else '  ⚠️ no W-9'}")
@@ -1128,8 +1189,69 @@ class AdminPanel(discord.ui.View):
 async def setup_cmd(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     await interaction.channel.send(embed=scout_panel_embed(), view=ScoutPanel())
-    await (await review_channel()).send(embed=admin_panel_embed(), view=AdminPanel())
+    pid = hq_channel_id("panel")
+    target = (bot.get_channel(pid) or await bot.fetch_channel(pid)) if pid else await review_channel()
+    await target.send(embed=admin_panel_embed(), view=AdminPanel())
     await say(interaction, "Panels posted.")
+
+
+_HQ_GUILDS = [discord.Object(id=int(HQ_GUILD_ID))] if HQ_GUILD_ID and HQ_GUILD_ID.isdigit() else discord.utils.MISSING
+
+
+async def build_hq(guild):
+    """Create (or reuse) the HQ server's roles and private channels, remember them, and post the admin panel.
+    Safe to run again: it finds what already exists by name. Returns a list of notes for the admin."""
+    notes = []
+    admin_role = discord.utils.get(guild.roles, name="Admin")
+    if admin_role is None:
+        admin_role = await guild.create_role(name="Admin", permissions=discord.Permissions(administrator=True),
+                                             colour=discord.Colour(GOLD), hoist=True, reason="Hierarchy HQ setup")
+        notes.append("Created the **Admin** role (full control of this HQ server and the admin panel).")
+    if discord.utils.get(guild.roles, name="Manager") is None:
+        await guild.create_role(name="Manager", reason="Hierarchy HQ setup")
+        notes.append("Created the **Manager** role (hand it to managers; it gives no admin powers here).")
+    private = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+               admin_role: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+               guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True,
+                                                     attach_files=True, read_message_history=True, manage_messages=True)}
+    category = discord.utils.get(guild.categories, name="HQ")
+    if category is None:
+        category = await guild.create_category("HQ", overwrites=private, reason="Hierarchy HQ setup")
+    chans = {}
+    for key, name in (("panel", "admin-panel"), ("review", "review")):
+        ch = discord.utils.get(guild.text_channels, name=name)
+        if ch is None:
+            ch = await guild.create_text_channel(name, category=category, overwrites=private, reason="Hierarchy HQ setup")
+            notes.append(f"Created #{name}.")
+        chans[key] = ch
+    conn = db()
+    try:
+        for key, ch in chans.items():
+            core.set_setting(conn, f"hq:{key}", ch.id)
+    finally:
+        conn.close()
+    await sync_post("admin_hq", chans["panel"].id, admin_panel_embed(), AdminPanel())
+    await chans["review"].send("Scout applications and prospect review cards will arrive here from now on.", delete_after=60)
+    notes.append(f"Admin panel is in {chans['panel'].mention}. Review cards go to {chans['review'].mention}.")
+    return notes
+
+
+@bot.tree.command(name="setup-hq", description="Set up this server as your private HQ: admin panel and review channel", guilds=_HQ_GUILDS)
+@app_commands.default_permissions(administrator=True)
+@app_commands.guild_only()
+async def setup_hq(interaction: discord.Interaction):
+    if not HQ_GUILD_ID:
+        return await say(interaction, "First add `HQ_GUILD_ID` (this server's ID) in Railway and redeploy, then run this again.")
+    if str(interaction.guild_id) != str(HQ_GUILD_ID):
+        return await say(interaction, "Run this in your HQ server, the one whose ID is in `HQ_GUILD_ID`.")
+    if not interaction.user.guild_permissions.administrator:
+        return await say(interaction, "Admins only.")
+    await interaction.response.defer(ephemeral=True)
+    try:
+        notes = await build_hq(interaction.guild)
+    except discord.Forbidden:
+        return await say(interaction, "I need the **Administrator** permission in this server to set it up. Re-invite me with it, or give my role Administrator.")
+    await say(interaction, "\n".join(notes) + "\n\nNext: give yourself and other admins the **Admin** role, then use the panel to upload your files.")
 
 
 @bot.tree.command(name="setupapply", description="Post the 'Apply to be a scout' button here (the welcome channel)")
@@ -1234,17 +1356,19 @@ async def exportpayouts(interaction: discord.Interaction, month: str | None = No
 
 @bot.tree.command(name="removescout", description="Remove a scout (no new submissions). Residuals continue unless it's for breach.")
 @apply(admin_only)
-async def removescout(interaction: discord.Interaction, scout: discord.Member, for_breach: bool = False):
+async def removescout(interaction: discord.Interaction, scout: discord.User, for_breach: bool = False):
     conn = db()
     try:
         core.remove_scout(conn, scout.id, for_breach)
     except ValueError as e:
         return await say(interaction, str(e))
     if SCOUT_ROLE_ID:
-        try:
-            await scout.remove_roles(discord.Object(id=int(SCOUT_ROLE_ID)))
-        except (discord.HTTPException, ValueError):
-            pass
+        member = await scout_member(scout.id, interaction)
+        if member is not None:
+            try:
+                await member.remove_roles(discord.Object(id=int(SCOUT_ROLE_ID)))
+            except (discord.HTTPException, ValueError):
+                pass
     await dm_scout(scout.id, "Your scouting agreement with Hierarchy Music has ended. You can't submit new prospects.")
     await say(interaction, f"{scout.display_name} removed. " + (
         "Marked as removed for breach: **no commission for later months.** Earlier months stay payable."
@@ -1346,7 +1470,7 @@ async def adjust(interaction: discord.Interaction, handle: str, month: str, chan
 
 @bot.tree.command(name="w9", description="Mark a scout's W-9 + Direct Deposit packet as on file (after they sign it in DocuSign)")
 @apply(admin_only)
-async def w9(interaction: discord.Interaction, scout: discord.Member, on_file: bool = True):
+async def w9(interaction: discord.Interaction, scout: discord.User, on_file: bool = True):
     conn = db()
     core.ensure_payee(conn, scout.id, scout.display_name)
     core.set_w9(conn, scout.id, on_file)
@@ -1355,7 +1479,7 @@ async def w9(interaction: discord.Interaction, scout: discord.Member, on_file: b
 
 @bot.tree.command(name="w9assign", description="Link a completed DocuSign W-9 to a scout")
 @apply(admin_only)
-async def w9assign(interaction: discord.Interaction, envelope: str, scout: discord.Member):
+async def w9assign(interaction: discord.Interaction, envelope: str, scout: discord.User):
     try:
         core.assign_w9_event(db(), envelope.strip(), scout.id)
     except ValueError as e:

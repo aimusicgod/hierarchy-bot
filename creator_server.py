@@ -163,6 +163,23 @@ def register(bot):
             msg += "\n\n" + "\n".join(f"• {n}" for n in notes)
         await ctx.say(interaction, msg[:1900])
 
+    @bot.tree.command(name="assign-manager", description="Link a manager's TikTok email to their Discord account so alerts reach them", guild=gobj)
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(email="The manager's email exactly as TikTok shows it", user="Their Discord account", name="Their name (optional)")
+    async def assign_manager(interaction: discord.Interaction, email: str, user: discord.Member, name: str = ""):
+        import managers
+        conn = ctx.db()
+        try:
+            try:
+                e = managers.set_map(conn, email, user.id, name or user.display_name)
+            except ValueError as ex:
+                return await ctx.say(interaction, str(ex))
+            n = conn.execute("SELECT COUNT(*) FROM live_stats WHERE manager=?", (e,)).fetchone()[0]
+        finally:
+            conn.close()
+        await ctx.say(interaction, f"Linked {e} to {user.mention}. Follow-up alerts for their creators ({n} in the last file) will tag them.")
+
     @bot.tree.command(name="setup-apply", description="Post the application panel in this channel", guild=gobj)
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_permissions(administrator=True)

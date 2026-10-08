@@ -95,3 +95,37 @@ def line(g, with_history=True):
     if k >= 1 and g["level"] == "danger":
         s += f"\n   Below the line {k} month{'s' if k != 1 else ''} in a row"
     return s
+
+
+# ---------- who is a creator's manager (so alerts reach the right person) ----------
+def set_map(conn, email, discord_id, name=None):
+    email = str(email or "").strip().lower()
+    if "@" not in email:
+        raise ValueError("That doesn't look like an email address. Use the manager's email exactly as it appears in the TikTok file.")
+    conn.execute("INSERT INTO manager_map(email, discord_id, name) VALUES (?,?,?) "
+                 "ON CONFLICT(email) DO UPDATE SET discord_id=excluded.discord_id, name=COALESCE(excluded.name, manager_map.name)",
+                 (email, str(discord_id), (name or "").strip() or None))
+    conn.commit()
+    return email
+
+
+def assignment(conn, handle):
+    """{'email', 'discord_id', 'name'} for a creator's manager, from the last TikTok file. Fields are None when unknown."""
+    st = conn.execute("SELECT manager FROM live_stats WHERE handle=?", (str(handle).lower(),)).fetchone()
+    email = (st["manager"] if st else None) or None
+    row = conn.execute("SELECT * FROM manager_map WHERE email=?", (email,)).fetchone() if email else None
+    return {"email": email, "discord_id": row["discord_id"] if row else None, "name": row["name"] if row else None}
+
+
+def label(a):
+    """Text for a card: a mention when the manager is linked, otherwise the email and how to link it."""
+    if a["discord_id"]:
+        return f"<@{a['discord_id']}>" + (f" ({a['name']})" if a["name"] else "")
+    if a["email"]:
+        return f"{a['email']} (not linked yet: use /assign-manager)"
+    return "none in the TikTok file"
+
+
+def unlinked(conn):
+    rows = conn.execute("SELECT DISTINCT manager FROM live_stats WHERE manager IS NOT NULL AND manager != ''").fetchall()
+    return sorted(r[0] for r in rows if not conn.execute("SELECT 1 FROM manager_map WHERE email=?", (r[0],)).fetchone())

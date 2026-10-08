@@ -355,3 +355,19 @@ assert unlock.progress(c4, "newbie", cfg, datetime.date(2026, 10, 27))["window_o
 cfg2 = {**cfg, "unlock": {"enabled": False}}
 assert unlock.is_unlocked(c4, "newbie", cfg2) and unlock.progress_text(c4, "newbie", cfg2) is None
 print("unlock: OK")
+
+# --- alerts tied to the creator's manager
+c5 = core.connect(":memory:"); creators.ensure_schema(c5)
+hdr = "Data period,Creator ID,Creator's username,Creator Network manager,Diamonds,LIVE duration,Valid go LIVE days,LIVE streams\n"
+rows, _ = nudges.parse_stats((hdr + "2026-10-01 ~ 2026-10-06,1,ann,Boss@X.com,0,0s,0,0\n2026-10-01 ~ 2026-10-06,2,bo,other@x.com,0,0s,0,0\n"
+                              "2026-10-01 ~ 2026-10-06,3,cy,,0,0s,0,0\n").encode(), "m.csv", nudges.load_config())
+nudges.save_stats(c5, rows)
+assert managers.unlinked(c5) == ["boss@x.com", "other@x.com"]
+try: managers.set_map(c5, "not-an-email", 1); raise SystemExit("bad email accepted")
+except ValueError: pass
+managers.set_map(c5, " Boss@X.com ", 999, "Boss Man")
+a = managers.assignment(c5, "ann")
+assert a == {"email": "boss@x.com", "discord_id": "999", "name": "Boss Man"}, a
+assert managers.label(a) == "<@999> (Boss Man)" and "not linked" in managers.label(managers.assignment(c5, "bo"))
+assert managers.label(managers.assignment(c5, "cy")) == "none in the TikTok file" and managers.unlinked(c5) == ["other@x.com"]
+print("manager alerts: OK")

@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS manager_results (
     PRIMARY KEY (manager, month)
 );
 -- who has passed the unlock quota (valid LIVE days) and so sees the whole community and academy
+-- which Discord account is the manager whose email appears in TikTok's "Creator Network manager" column
+CREATE TABLE IF NOT EXISTS manager_map (email TEXT PRIMARY KEY, discord_id TEXT NOT NULL, name TEXT);
 CREATE TABLE IF NOT EXISTS creator_unlock (
     handle TEXT PRIMARY KEY, unlocked_at TEXT, unlocked_by TEXT, missed_at TEXT
 );
